@@ -305,7 +305,7 @@ h1 {
   pointer-events: none;
   transition: opacity .3s, transform .3s;
   z-index: 10;
-  max-width: 90vw;
+  max-width: 90%;
 }
 #toast.show { opacity: 1; transform: translate(-50%, 0); }
 #toast small { display: block; font-size: 14px; color: #8a5a20; margin-top: 4px; }
@@ -328,7 +328,7 @@ h1 {
   border: 6px solid #e8892b;
   padding: 24px 30px;
   max-width: 520px;
-  width: 92vw;
+  width: 92%;
   text-align: center;
 }
 .card h2 { margin: 0 0 10px; color: #d26a00; }
@@ -417,6 +417,14 @@ h1 {
 @media (pointer: coarse) {
   #touch { display: flex; }
 }
+/* ---------- スマホ：台・操作ボタン・航路だけを1画面に（町の景色や説明は隠す） ---------- */
+html.phone-layout, html.phone-layout body { overflow: hidden; }
+html.phone-layout #app { flex-direction: column; align-items: center; justify-content: flex-start; height: 100%; padding: 8px; gap: 8px; }
+html.phone-layout #tableWrap { flex: none; width: auto; max-width: none; height: auto; }
+html.phone-layout #table { max-height: none; }
+html.phone-layout #touch { margin-top: 8px; }
+html.phone-layout #right { flex: none; width: 100%; height: auto; }
+html.phone-layout #sceneWrap, html.phone-layout #bottom, html.phone-layout #stripHint { display: none; }
 </style>
 </head>
 <body>
@@ -512,6 +520,56 @@ h1 {
   </div>
 
   <script>
+// ============================================================
+//  スマホを横に持っているときは、画面を90度まわして縦向きで表示する（台が縦長なので）
+//  （iPhone でも使えるように、ブラウザの向き固定ではなく画面ごと回す）
+//  ※ タブレットの横向き（高さが十分ある）は、横並びの画面のまま
+// ============================================================
+function gameRotated() {
+  return !!(window.matchMedia && matchMedia('(pointer: coarse)').matches) && window.innerWidth > window.innerHeight && window.innerHeight < 600;
+}
+// 画面上の座標 → 要素の中の座標（回しているときは逆回転して計算）
+function gameLocalXY(el, cx, cy) {
+  const r = el.getBoundingClientRect();
+  return gameRotated() ? { x: r.bottom - cy, y: cx - r.left } : { x: cx - r.left, y: cy - r.top };
+}
+function applyGameRotation() {
+  const b = document.body; if (!b) return;
+  const rot = gameRotated();
+  document.documentElement.classList.toggle('game-rotated', rot);
+  if (rot) {
+    Object.assign(b.style, { position: 'fixed', top: '0', left: '0', margin: '0',
+      width: window.innerHeight + 'px', height: window.innerWidth + 'px',
+      transformOrigin: '0 0', transform: `translateY(${window.innerHeight}px) rotate(-90deg)` });
+  } else {
+    for (const k of ['position', 'top', 'left', 'margin', 'width', 'height', 'transformOrigin', 'transform']) b.style[k] = '';
+  }
+}
+// スマホ（短い辺が 600px 未満）のときは、台・操作ボタン・航路の帯だけを1画面に収める
+function phoneLayout() {
+  return !!(window.matchMedia && matchMedia('(pointer: coarse)').matches) && Math.min(window.innerWidth, window.innerHeight) < 600;
+}
+function layoutPhone() {
+  const on = phoneLayout(), t = document.getElementById('table');
+  document.documentElement.classList.toggle('phone-layout', on);
+  if (!t) return;
+  if (!on) { t.style.width = ''; t.style.height = ''; return; }
+  const rot = gameRotated();
+  const bw = rot ? window.innerHeight : window.innerWidth, bh = rot ? window.innerWidth : window.innerHeight;
+  const touchEl = document.getElementById('touch'), stripEl2 = document.getElementById('routeStrip');
+  const touchH = (touchEl && touchEl.offsetHeight) || 60, stripH = (stripEl2 && stripEl2.offsetHeight) || 100;
+  const avH = bh - 16 - 8 - touchH - 8 - stripH - 4, avW = bw - 16; // 余白・すき間を引いた残り
+  const h = Math.max(200, Math.min(avH, avW * 820 / 500));
+  t.style.height = Math.floor(h) + 'px';
+  t.style.width = Math.floor(h * 500 / 820) + 'px';
+}
+function applyLayout() { applyGameRotation(); layoutPhone(); }
+applyLayout();
+window.addEventListener('resize', applyLayout);
+window.addEventListener('load', applyLayout);
+window.addEventListener('orientationchange', () => setTimeout(() => { applyLayout(); window.dispatchEvent(new Event('resize')); }, 300));
+</script>
+<script>
 'use strict';
 
 // =====================================================
@@ -1955,7 +2013,7 @@ let TOWN_X = 420;    // 町に着いたときの名所の位置
 let TOWN_SPAN = 760; // 町と町の間の画面上の距離
 
 function resizeScene() {
-  const r = scene.parentElement.getBoundingClientRect();
+  const pe = scene.parentElement, r = { width: pe.clientWidth, height: pe.clientHeight }; // 回転しても正しい大きさ
   if (!r.width || !r.height) return;
   const dpr = window.devicePixelRatio || 1;
   scene.width = Math.round(r.width * dpr);
@@ -2669,12 +2727,12 @@ function moveStrip(x) {
 
 stripEl.addEventListener('pointerdown', e => {
   if (e.target.closest('.stripArrow')) return;
-  stripDrag = { x: e.clientX, start: trackX };
+  stripDrag = { x: gameLocalXY(stripEl, e.clientX, e.clientY).x, start: trackX };
   stripEl.setPointerCapture(e.pointerId);
   stripEl.classList.add('dragging');
 });
 stripEl.addEventListener('pointermove', e => {
-  if (stripDrag) moveStrip(stripDrag.start + e.clientX - stripDrag.x);
+  if (stripDrag) moveStrip(stripDrag.start + gameLocalXY(stripEl, e.clientX, e.clientY).x - stripDrag.x);
 });
 function endStripDrag() {
   stripDrag = null;
@@ -2964,8 +3022,7 @@ bindButton('btnLaunch', () => setPlunger(true), () => setPlunger(false));
 // 台の左右タップでもフリッパーが動く
 const activeTouches = new Map();
 canvas.addEventListener('pointerdown', e => {
-  const rect = canvas.getBoundingClientRect();
-  const side = (e.clientX - rect.left) < rect.width / 2 ? 'left' : 'right';
+  const side = gameLocalXY(canvas, e.clientX, e.clientY).x < canvas.clientWidth / 2 ? 'left' : 'right'; // 回転しても台の左右で判定
   activeTouches.set(e.pointerId, side);
   setFlipper(side, true);
 });
@@ -2994,13 +3051,13 @@ let acc = 0;
 function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
-  if (state === 'play') {
+  if (state === 'play' && !touchPaused) {
     acc += dt;
     while (acc >= STEP) { physicsStep(STEP); acc -= STEP; }
   }
   // 描画でエラーが起きても、ゲームが止まらないようにする
   try {
-    update(dt);
+    if (!touchPaused) update(dt);
     ctx.save();
     if (shakeT > 0) ctx.translate(Math.sin(clock * 60) * 6 * shakeT, Math.cos(clock * 47) * 4 * shakeT);
     drawTable();
@@ -3028,6 +3085,93 @@ document.addEventListener('fullscreenchange', () => {
   if (document.fullscreenElement) kb.lock(['Escape']).catch(() => {});
   else kb.unlock();
 });
+
+let touchPaused = false; // スマホの ⏸ ボタンで止めているか
+const TOUCH_CFG = {
+  lockScroll: false, swipe: false, useMenu: true,
+  showPause: () => state === 'play',
+  menuOpen: () => touchPaused,
+  pause: () => { if (state !== 'play') return; releaseInputs(); touchPaused = true; },
+  resume: () => { touchPaused = false; last = performance.now(); },
+  retire: () => { touchPaused = false; last = performance.now(); if (state === 'play') { releaseInputs(); endGame('retire'); } },
+};
+// ============================================================
+//  スマホ・タブレット用の操作（指でさわったときだけ出る。パソコンでは今までどおり）
+//  ・スワイプ = 十字キー（1回のスワイプで1回だけ。指を離さずに向きを変えると、もう1回）
+//  ・右上の ⏸ ボタン = 一時停止 → 「つづける / リタイア」
+// ============================================================
+(function () {
+  const T = TOUCH_CFG;
+  const css = document.createElement('style');
+  css.textContent = `
+    ${T.lockScroll ? 'html, body { touch-action: none; overscroll-behavior: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }' : ''}
+    .tc-ui { font-family: 'Yu Gothic UI', 'Meiryo', 'Hiragino Sans', sans-serif; -webkit-tap-highlight-color: transparent; }
+    #tcPause { position: fixed; top: max(10px, env(safe-area-inset-top)); right: max(10px, env(safe-area-inset-right)); z-index: 50;
+      width: 54px; height: 54px; border-radius: 50%; border: 2px solid rgba(255,255,255,.85); background: rgba(0,0,0,.5);
+      color: #fff; font-size: 22px; font-weight: 800; display: none; align-items: center; justify-content: center; padding: 0; touch-action: manipulation; }
+    #tcMenu { position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,.65); display: none; align-items: center; justify-content: center; touch-action: manipulation; }
+    #tcMenu .box { background: #1d1640; border: 3px solid #fff; border-radius: 18px; padding: 20px 22px; text-align: center; color: #fff; width: min(320px, 86%); }
+    #tcMenu .ttl { font-size: 26px; font-weight: 800; margin: 0 0 4px; }
+    #tcMenu .note { font-size: 14px; opacity: .85; margin: 0 0 8px; }
+    #tcMenu button { display: block; width: 100%; font-size: 20px; font-weight: 800; padding: 14px; margin-top: 10px; border-radius: 12px; border: none; color: #fff; font-family: inherit; }
+    #tcMenu .resume { background: #3f8f4a; }
+    #tcMenu .retire { background: #b8433a; }
+  `;
+  document.head.appendChild(css);
+
+  const pauseBtn = document.createElement('button');
+  pauseBtn.id = 'tcPause'; pauseBtn.className = 'tc-ui'; pauseBtn.textContent = '❚❚'; pauseBtn.setAttribute('aria-label', '一時停止');
+  document.body.appendChild(pauseBtn);
+  const menu = document.createElement('div');
+  menu.id = 'tcMenu'; menu.className = 'tc-ui';
+  menu.innerHTML = `<div class="box"><p class="ttl">${T.menuTitle || '一時停止中'}</p>${T.menuNote ? `<p class="note">${T.menuNote}</p>` : ''}
+    <button class="resume">▶ つづける</button><button class="retire">リタイア</button></div>`;
+  document.body.appendChild(menu);
+
+  let touchMode = window.matchMedia && matchMedia('(pointer: coarse)').matches;
+  const tapAudio = () => { try { T.audio && T.audio(); } catch (e) { } };
+  pauseBtn.addEventListener('click', e => { e.preventDefault(); tapAudio(); T.pause(); });
+  menu.querySelector('.resume').addEventListener('click', e => { e.preventDefault(); T.resume(); });
+  menu.querySelector('.retire').addEventListener('click', e => { e.preventDefault(); T.retire(); });
+
+  // ボタンの表示・非表示
+  (function tick() {
+    const open = !!(T.menuOpen && T.menuOpen());
+    pauseBtn.style.display = touchMode && !open && T.showPause() ? 'flex' : 'none';
+    menu.style.display = touchMode && open && T.useMenu ? 'flex' : 'none';
+    requestAnimationFrame(tick);
+  })();
+
+  // ---- スワイプ → 矢印キー ----
+  const key = (type, k) => window.dispatchEvent(new KeyboardEvent(type, { key: k, code: k, bubbles: true, cancelable: true }));
+  const TH = 28; // これだけ指が動いたらスワイプ
+  let sw = null;
+  document.addEventListener('pointerdown', e => {
+    if (e.pointerType === 'mouse') return;
+    touchMode = true;
+    if (!T.swipe || sw) return;                                   // 2本目の指は無視
+    if (e.target.closest && e.target.closest('.tc-ui')) return;   // ボタンの上は無視
+    if (T.menuOpen && T.menuOpen()) return;
+    sw = { id: e.pointerId, x: e.clientX, y: e.clientY, dir: null, t: performance.now() };
+  }, { passive: true });
+  document.addEventListener('pointermove', e => {
+    if (!sw || e.pointerId !== sw.id) return;
+    const dx = e.clientX - sw.x, dy = e.clientY - sw.y, ax = Math.abs(dx), ay = Math.abs(dy);
+    if (Math.max(ax, ay) < TH) return;
+    if (sw.dir && Math.max(ax, ay) < Math.min(ax, ay) * 1.5) return; // 斜めっぽいときは向きを変えない
+    const dir = ax > ay ? (dx > 0 ? 'ArrowRight' : 'ArrowLeft') : (dy > 0 ? 'ArrowDown' : 'ArrowUp');
+    if (dir !== sw.dir) { key('keydown', dir); key('keyup', dir); sw.dir = dir; } // 押してすぐ離す＝押しっぱなしにしない
+    sw.x = e.clientX; sw.y = e.clientY; // 指を離さずに向きを変えられるように、基準を今の場所へ
+  }, { passive: true });
+  function end(e) {
+    if (!sw || e.pointerId !== sw.id) return;
+    tapAudio();
+    if (!sw.dir && e.type === 'pointerup' && performance.now() - sw.t < 400 && T.tap && !(T.menuOpen && T.menuOpen())) T.tap();
+    sw = null;
+  }
+  document.addEventListener('pointerup', end);
+  document.addEventListener('pointercancel', end);
+})();
 </script>
 </body>
 </html>
