@@ -21,6 +21,14 @@ const CONFIG = {
   gameDurationSec: 300,     // 1プレイの長さ（秒）。300 = 5分
   lifeMode: 'life3',        // 'life3' = ライフ制 / 'oneshot' = 1回ミスで終了（タイトル画面の M キーでも切替可）
   lives: 3,                 // ライフ制のときのライフ数
+  // ---- 共有ランキング（生存時間・Supabase）。URL と KEY が空なら、この端末だけのランキング ----
+  ranking: {
+    supabaseUrl: 'https://ncerdqxppajbjapdwjut.supabase.co',
+    supabaseKey: 'sb_publishable_UyfEKPNCs5mrIOpPBbwxxg_C7RTrOnA',
+    table: 'pig_scores',
+    size: 5,                // 何位まで表示するか
+    refreshSec: 15,         // タイトル・結果画面で読み直す間隔（秒）
+  },
   sound: true,              // 効果音 ON/OFF
   showWeakHint: true,       // 家の下に「〇〇に弱い」と表示する
 
@@ -303,6 +311,9 @@ function startGame() {
     safeStreak: { straw: 0, wood: 0, brick: 0 }, // 各家が何回連続で安全だったか
   };
   G.usedInfinite = ADMIN.infinite;
+  G.rankable = !ADMIN.infinite && CONFIG.quake.enabled && CONFIG.debug.startAtSec === 0;
+  G.rankShuffle = CONFIG.shuffle.enabled;
+  G.myRank = null;
 }
 
 // リタイア：結果は出さずに最初の画面（タイトル）へ戻る。記録も残さない
@@ -319,6 +330,132 @@ function resetLayout() {
   G.pigSpot = plazaSpot(); const p = PIG_POS[G.pigSpot]; G.pig.x = p.x; G.pig.y = p.y; G.pig.t = 1;
 }
 
+/* =====================================================================
+   ランキング（生存時間）：難易度3 × 家の入れかわり2 × モード2 ごと
+   ・記録はまずこの端末に「未送信」として保存 → Supabase へ送る（送れなければ、あとで送り直す）
+   ・表示は「Supabase の上位（前回読めた分）」＋「この端末の未送信の記録」
+   ===================================================================== */
+const RANK_ONLINE = !!(CONFIG.ranking.supabaseUrl && CONFIG.ranking.supabaseKey);
+const RANK_CACHE_KEY = 'three_pigs_rank_cache_v1', RANK_PENDING_KEY = 'three_pigs_rank_pending_v1';
+const rankNet = { ok: null, busy: false, lastAt: -1e9 }; // ok: null=未確認 true=OK false=つながらない
+const rankKey = (d, sh, m) => `${d}|${sh ? 1 : 0}|${m}`;
+const curRankKey = () => rankKey(G.difficulty, CONFIG.shuffle.enabled, G.mode);
+const entryId = r => r.at + ':' + r.t;
+const rankSort = (p, q) => q.t - p.t || q.sc - p.sc || p.at - q.at;
+function lsGet(k) { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { return null; } }
+function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { } }
+let rankCache = lsGet(RANK_CACHE_KEY);
+if (!rankCache || typeof rankCache !== 'object' || Array.isArray(rankCache)) rankCache = {};
+function pendingRanks() { const a = lsGet(RANK_PENDING_KEY); return Array.isArray(a) ? a.filter(r => r && isFinite(r.t)) : []; }
+function rankList(key) {
+  const seen = new Set(), all = [];
+  for (const r of (rankCache[key] || []).concat(pendingRanks().filter(r => r.k === key))) {
+    if (!r || !isFinite(r.t)) continue;
+    const id = entryId(r); if (seen.has(id)) continue;
+    seen.add(id); all.push(r);
+  }
+  return all.sort(rankSort).slice(0, CONFIG.ranking.size);
+}
+function fmtSurv(t) { const s = Math.floor(t); return `${Math.floor(s / 60)}分${String(s % 60).padStart(2, '0')}秒`; }
+function sbFetch(path, opts) {
+  const key = CONFIG.ranking.supabaseKey;
+  const headers = { apikey: key, 'Content-Type': 'application/json' };
+  if (!key.startsWith('sb_')) headers.Authorization = 'Bearer ' + key; // 古い anon key（JWT）のとき
+  const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 8000);
+  return fetch(CONFIG.ranking.supabaseUrl.replace(/\/+$/, '') + '/rest/v1/' + path,
+    Object.assign({ signal: ctl.signal }, opts, { headers: Object.assign(headers, (opts && opts.headers) || {}) }))
+    .finally(() => clearTimeout(timer));
+}
+async function syncRanks() {
+  if (!RANK_ONLINE || rankNet.busy) return;
+  rankNet.busy = true; rankNet.lastAt = performance.now();
+  const mode = G.mode, T = CONFIG.ranking.table;
+  try {
+    // 1) 未送信の記録を送る
+    const pend = pendingRanks();
+    if (pend.length) {
+      const body = pend.map(r => { const [d, sh, m] = r.k.split('|'); return { difficulty: d, shuffle: sh === '1', mode: m, survival: r.t, score: r.sc | 0, cleared: !!r.c, at: r.at }; });
+      const res = await sbFetch(T, { method: 'POST', headers: { Prefer: 'return=minimal' }, body: JSON.stringify(body) });
+      if (!res.ok) throw new Error('insert ' + res.status);
+      const sent = new Set(pend.map(entryId));
+      // 送れた記録は、次に読み直すまで表示が消えないようにキャッシュへ移す
+      for (const r of pend) (rankCache[r.k] = rankCache[r.k] || []).push(r);
+      lsSet(RANK_PENDING_KEY, pendingRanks().filter(r => !sent.has(entryId(r))));
+    }
+    // 2) 今のモードの6つ（難易度3 × 入れかわり2）の上位を読む
+    const keys = [];
+    for (const d of DIFF_ORDER) for (const sh of [false, true]) keys.push([d, sh]);
+    const lists = await Promise.all(keys.map(([d, sh]) =>
+      sbFetch(`${T}?select=survival,score,cleared,at&difficulty=eq.${d}&shuffle=eq.${sh}&mode=eq.${mode}&order=survival.desc,score.desc,at.asc&limit=${CONFIG.ranking.size}`)
+        .then(res => { if (!res.ok) throw new Error('select ' + res.status); return res.json(); })));
+    keys.forEach(([d, sh], i) => {
+      const k = rankKey(d, sh, mode);
+      rankCache[k] = lists[i].map(r => ({ k, t: Number(r.survival), sc: Number(r.score) || 0, c: !!r.cleared, at: Number(r.at) })).filter(r => isFinite(r.t));
+    });
+    lsSet(RANK_CACHE_KEY, rankCache);
+    rankNet.ok = true;
+  } catch (e) {
+    rankNet.ok = false;
+    console.warn('共有ランキングにつながりません:', e);
+  } finally {
+    rankNet.busy = false;
+  }
+}
+// 1プレイの記録を残す（∞ライフ・スタート時刻・地震OFFなど管理者設定を使ったプレイは残さない）
+function recordRank(cleared) {
+  G.myRank = null;
+  const fair = G.rankable && !G.usedInfinite && CONFIG.quake.enabled && CONFIG.debug.startAtSec === 0 && G.rankShuffle === CONFIG.shuffle.enabled;
+  if (!fair) return;
+  const e = { k: curRankKey(), t: Math.round(G.playTime * 100) / 100, sc: G.score, c: !!cleared, at: Date.now() };
+  let pend = pendingRanks().concat([e]);
+  if (!RANK_ONLINE) { // オフライン設定のときは、各モードの上位だけ残す
+    const keep = new Set();
+    for (const k of new Set(pend.map(r => r.k))) for (const r of pend.filter(r => r.k === k).sort(rankSort).slice(0, CONFIG.ranking.size)) keep.add(r);
+    pend = pend.filter(r => keep.has(r));
+  }
+  lsSet(RANK_PENDING_KEY, pend);
+  G.myRank = e;
+  syncRanks();
+}
+function rankStatus() {
+  if (!RANK_ONLINE) return null;
+  return rankNet.ok === true ? ['● 共有中', '#7dffc8'] : rankNet.ok === false ? ['● つながっていません（前に読めた分を表示中）', '#ff9f6b'] : ['● 接続中…', '#cfc8ff'];
+}
+const modeLabel = m => m === 'life3' ? `ライフ${CONFIG.lives}` : '一発勝負';
+function drawRankRows(x, y, w, key, rowH, fs, hlId) {
+  const list = rankList(key);
+  for (let i = 0; i < CONFIG.ranking.size; i++) {
+    const r = list[i], yy = y + i * rowH;
+    const hl = r && hlId && entryId(r) === hlId;
+    if (hl) { rr(x + 2, yy - rowH / 2 + 2, w - 4, rowH - 4, 6); ctx.fillStyle = Math.floor(G.anim * 4) % 2 ? 'rgba(255,233,107,0.35)' : 'rgba(255,233,107,0.15)'; ctx.fill(); }
+    const col = hl ? '#ffe96b' : i === 0 ? '#ffd34a' : '#fff';
+    txt(`${i + 1}位`, x + 10, yy, fs, col, 'left');
+    txt(r ? fmtSurv(r.t) + (r.c ? '★' : '') : '---', x + w * 0.27, yy, fs, col, 'left');
+    txt(r ? `${r.sc}点` : '', x + w - 10, yy, fs - 3, '#ccc', 'right', null, 'normal');
+  }
+}
+// タイトルで R キー：6つのランキングを一覧
+function drawRankBoard() {
+  ctx.fillStyle = 'rgba(0,0,0,0.88)'; ctx.fillRect(0, 0, W, H);
+  panel(30, 20, 900, 600);
+  txt(`ランキング（生存時間）　${modeLabel(G.mode)}`, W / 2, 58, 30, '#ffd34a', 'center', '#5a2a00');
+  const st = rankStatus(); if (st) txt(st[0], 915, 34, 13, st[1], 'right', null, 'normal');
+  const bw = 280, bh = 238, gx = 15, x0 = 45;
+  [false, true].forEach((sh, ri) => {
+    DIFF_ORDER.forEach((d, ci) => {
+      const bx = x0 + ci * (bw + gx), by = 92 + ri * (bh + 12);
+      const cur = d === G.difficulty && sh === CONFIG.shuffle.enabled;
+      rr(bx, by, bw, bh, 14); ctx.fillStyle = cur ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.05)'; ctx.fill();
+      ctx.strokeStyle = cur ? '#ffe96b' : 'rgba(255,255,255,0.2)'; ctx.lineWidth = cur ? 3 : 1.5; ctx.stroke();
+      const dc = { easy: '#5fc46a', normal: '#e8b33a', hard: '#e0544a' }[d];
+      txt(CONFIG.difficulties[d].name, bx + 16, by + 28, 22, dc, 'left');
+      txt(sh ? '入れかわり あり' : '入れかわり なし', bx + bw - 14, by + 28, 15, sh ? '#d6a8ff' : '#bbb', 'right', null, 'normal');
+      drawRankRows(bx + 6, by + 72, bw - 12, rankKey(d, sh, G.mode), 36, 19, null);
+    });
+  });
+  txt('★ = 5分 生きのびた　同じ時間ならスコアが高い方が上　　M：モード切替　なにかキーで もどる', W / 2, 600, 14, '#ddd', 'center', null, 'normal');
+}
+
 function endGame(cleared) {
   G.state = 'result'; G.cleared = cleared; G.resultT = 0; G.shakeBase = 0;
   const best = loadBest();
@@ -326,6 +463,7 @@ function endGame(cleared) {
   G.newBest = !G.usedInfinite && G.score > best;
   G.bestScore = G.usedInfinite ? best : Math.max(best, G.score);
   if (G.newBest) saveBest(G.score);
+  recordRank(cleared);
   cleared ? SFX.win() : SFX.lose();
 }
 
@@ -783,7 +921,7 @@ function movePig(spot) {
   if (G.pigSpot === spot) return;
   G.pigSpot = spot; setPigTarget(spot, CONFIG.pigMoveSec); SFX.move();
 }
-function toggleMode() { G.mode = G.mode === 'life3' ? 'oneshot' : 'life3'; G.bestScore = loadBest(); SFX.move(); }
+function toggleMode() { G.mode = G.mode === 'life3' ? 'oneshot' : 'life3'; G.bestScore = loadBest(); SFX.move(); rankNet.lastAt = -1e9; }
 
 window.addEventListener('keydown', e => {
   const k = e.key;
@@ -794,7 +932,13 @@ window.addEventListener('keydown', e => {
   // F2：管理者メニュー（開いている間はゲームが止まる）
   if (k === 'F2') { e.preventDefault(); ADMIN.open = !ADMIN.open; if (ADMIN.open) ADMIN.sel = 0; return; }
   if (ADMIN.open) { e.preventDefault(); adminKey(k); return; }
+  if (G.state === 'title' && G.rankView) {
+    if (k === 'm' || k === 'M') toggleMode();
+    else { G.rankView = false; SFX.move(); }
+    return;
+  }
   if (G.state === 'title') {
+    if (k === 'r' || k === 'R') { G.rankView = true; rankNet.lastAt = -1e9; SFX.move(); return; }
     if (k === ' ' || k === 'Enter') startGame();
     else if (k === 'ArrowUp' || k === 'ArrowDown') { G.titleRow = (G.titleRow + 1) % 2; SFX.move(); }
     else if (k === 'ArrowLeft' || k === 'ArrowRight') {
@@ -848,6 +992,7 @@ cv.addEventListener('mousedown', e => {
     else if (inBtn(BTN_RETIRE, mx, my)) retire();
     return;
   }
+  if (G.state === 'title' && G.rankView) { G.rankView = false; return; }
   if (G.state === 'title') startGame();
   else if (G.state === 'result' && G.resultT > 0.8) startGame();
 });
@@ -1316,7 +1461,7 @@ function render() {
 
   if (G.state === 'play' || G.state === 'result') { drawHUD(); drawBanner(); }
   if (G.state === 'play' && G.preview) drawPreview();
-  if (G.state === 'title') drawTitle();
+  if (G.state === 'title') { drawTitle(); if (G.rankView) drawRankBoard(); }
   if (G.state === 'result') drawResult();
   if (G.paused) {
     ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, W, H);
@@ -1367,9 +1512,10 @@ function drawTitle() {
     void n;
     txt(row.note, x0, y + 52, 13, '#bbb', 'left', null, 'normal');
   });
-  txt('↑↓ で項目をえらぶ　← → で切り替え', W / 2, 490, 14, '#ccc', 'center', null, 'normal');
-  const modeName = G.mode === 'life3' ? `ライフ${CONFIG.lives}` : '一発勝負';
-  txt(`モード: ${modeName}（M で切替）　ベストスコア: ${G.bestScore}${ADMIN.infinite ? '　∞ライフ ON' : ''}`, W / 2, 514, 16, ADMIN.infinite ? '#9fd0ff' : '#ffd34a', 'center', null, 'normal');
+  txt('↑↓ で項目をえらぶ　← → で切り替え　R：ランキングを見る', W / 2, 490, 14, '#ccc', 'center', null, 'normal');
+  const modeName = modeLabel(G.mode);
+  const top = rankList(curRankKey())[0];
+  txt(`モード: ${modeName}（M で切替）　この設定の1位: ${top ? fmtSurv(top.t) + (top.c ? '★' : '') : 'まだなし'}${ADMIN.infinite ? '　∞ライフ ON' : ''}`, W / 2, 514, 16, ADMIN.infinite ? '#9fd0ff' : '#ffd34a', 'center', null, 'normal');
   const blink = Math.floor(G.anim * 2) % 2 === 0;
   if (blink) txt('スペースキー（またはクリック）でスタート', W / 2, 550, 24, '#fff', 'center', '#000');
   txt(isFullscreen() ? 'F キー：全画面をやめる' : 'F キー：全画面にする', W / 2, 577, 14, '#ccc', 'center', null, 'normal');
@@ -1379,8 +1525,9 @@ function drawResult() {
   const a = Math.min(1, G.resultT * 3);
   ctx.save(); ctx.globalAlpha = a;
   ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(0, 0, W, H);
-  panel(210, 80, 540, 480);
-  txt(G.cleared ? '5分 生きのびた！' : G.retired ? 'リタイア' : 'ゲームオーバー', W / 2, 140, 44, G.cleared ? '#ffd34a' : G.retired ? '#cfd3da' : '#ff7a6a', 'center', '#000');
+  const CX = 300; // 成績パネルの中心（右側にランキングを出すので左に寄せる）
+  panel(40, 80, 520, 480);
+  txt(G.cleared ? '5分 生きのびた！' : G.retired ? 'リタイア' : 'ゲームオーバー', CX, 140, 44, G.cleared ? '#ffd34a' : G.retired ? '#cfd3da' : '#ff7a6a', 'center', '#000');
   const st = Math.floor(G.playTime), mm = Math.floor(st / 60), ss = st % 60;
   const rows = [
     ['スコア', `${G.score}`],
@@ -1389,10 +1536,26 @@ function drawResult() {
     ['地震をかわした回数', `${G.quakesDodged}`],
     ['ベストスコア', `${G.bestScore}${G.newBest ? '  NEW!' : ''}`],
   ];
-  rows.forEach((r, i) => { txt(r[0], 290, 215 + i * 48, 22, '#ddd', 'left', null, 'normal'); txt(r[1], 670, 215 + i * 48, 26, i === 0 || (i === 4 && G.newBest) ? '#ffd34a' : '#fff', 'right'); });
-  txt(`難易度: ${diff().name}　モード: ${G.mode === 'life3' ? 'ライフ' + CONFIG.lives : '一発勝負'}（M で切替）${CONFIG.shuffle.enabled ? '　入れかわりON' : ''}`, W / 2, 465, 17, '#bbb', 'center', null, 'normal');
-  if (G.resultT > 0.8 && Math.floor(G.anim * 2) % 2 === 0) txt('スペースキーでもう一回！', W / 2, 510, 26, '#fff', 'center', '#000');
-  txt(G.usedInfinite ? '（∞ライフを使ったのでベスト記録には残りません）　Esc でタイトルへ' : 'Esc でタイトルへ', W / 2, 545, 14, '#aaa', 'center', null, 'normal');
+  rows.forEach((r, i) => { txt(r[0], 90, 215 + i * 48, 22, '#ddd', 'left', null, 'normal'); txt(r[1], 510, 215 + i * 48, 26, i === 0 || (i === 4 && G.newBest) ? '#ffd34a' : '#fff', 'right'); });
+  txt(`難易度: ${diff().name}　モード: ${G.mode === 'life3' ? 'ライフ' + CONFIG.lives : '一発勝負'}（M で切替）${CONFIG.shuffle.enabled ? '　入れかわりON' : ''}`, CX, 465, 16, '#bbb', 'center', null, 'normal');
+  if (G.resultT > 0.8 && Math.floor(G.anim * 2) % 2 === 0) txt('スペースキーでもう一回！', CX, 510, 26, '#fff', 'center', '#000');
+  txt(G.usedInfinite ? '（∞ライフを使ったのでベスト記録には残りません）　Esc でタイトルへ' : 'Esc でタイトルへ', CX, 545, 14, '#aaa', 'center', null, 'normal');
+  // ---- 右：この設定のランキング ----
+  const RX = 575, RW = 355, rk = G.myRank ? G.myRank.k : curRankKey();
+  panel(RX, 80, RW, 480);
+  txt('ランキング（生存時間）', RX + RW / 2, 118, 24, '#ffd34a');
+  const [rd, rsh, rm] = rk.split('|');
+  txt(`${CONFIG.difficulties[rd].name}・入れかわり${rsh === '1' ? 'あり' : 'なし'}・${modeLabel(rm)}`, RX + RW / 2, 150, 15, '#ddd', 'center', null, 'normal');
+  drawRankRows(RX + 12, 200, RW - 24, rk, 50, 22, G.myRank ? entryId(G.myRank) : null);
+  const ns = rankStatus(); if (ns) txt(ns[0], RX + RW / 2, 462, 13, ns[1], 'center', null, 'normal');
+  let msg = '', mc = '#fff';
+  if (!G.myRank) { msg = '（管理者設定を使ったので記録されません）'; mc = '#aaa'; }
+  else {
+    const i = rankList(rk).findIndex(r => entryId(r) === entryId(G.myRank));
+    if (i >= 0) { msg = `${i + 1}位 に入ったよ！`; mc = '#ff9fe0'; } else { msg = 'ランキング入りならず…次こそ！'; mc = '#ccc'; }
+  }
+  txt(msg, RX + RW / 2, 500, msg.length > 14 ? 16 : 24, mc, 'center', '#000');
+  txt('★ = 5分 生きのびた', RX + RW / 2, 538, 13, '#aaa', 'center', null, 'normal');
   ctx.restore();
 }
 
@@ -1413,6 +1576,7 @@ function drawDebug() {
 let last = performance.now();
 function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  if (RANK_ONLINE && (G.state === 'title' || G.state === 'result') && !ADMIN.open && now - rankNet.lastAt > CONFIG.ranking.refreshSec * 1000) syncRanks();
   update(dt); render();
   requestAnimationFrame(frame);
 }
