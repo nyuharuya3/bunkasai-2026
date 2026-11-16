@@ -43,6 +43,11 @@ const CONFIG = {
   GAMEPAD_DEADZONE: 0.5,      // ゲームパッドのスティック/十字キーのしきい値
   SOUND_VOLUME: 0.5,          // 全体の音量（0〜1）
   ADMIN_KEY: 'F2',            // タイトル画面でこのキーを押すと管理メニュー
+  // ---- 共有ランキング（Supabase）。両方空なら、この端末だけのランキングになる ----
+  SUPABASE_URL: 'https://ncerdqxppajbjapdwjut.supabase.co',         // 例 'https://abcdefghijk.supabase.co'
+  SUPABASE_KEY: 'sb_publishable_UyfEKPNCs5mrIOpPBbwxxg_C7RTrOnA',         // Publishable key（sb_publishable_...）または anon key
+  SUPABASE_TABLE: 'mirror2_scores',
+  ONLINE_REFRESH_SEC: 15,     // タイトル・結果画面で共有ランキングを読み直す間隔（秒）
 };
 
 // ============================================================
@@ -1016,13 +1021,87 @@ function saveRanking(r) {
   try { localStorage.setItem(CONFIG.STORAGE_KEY, JSON.stringify(r)); } catch (e) { /* 保存できない環境 */ }
 }
 function clearRanking() {
-  try { localStorage.removeItem(CONFIG.STORAGE_KEY); } catch (e) {}
+  try { localStorage.removeItem(CONFIG.STORAGE_KEY); localStorage.removeItem(CONFIG.STORAGE_KEY + '_pending'); } catch (e) {}
   ranking = [];
+  if (typeof serverRanking !== 'undefined') { serverRanking = []; syncOnline(); }
 }
 function isRankIn(time) {
   return ranking.length < CONFIG.RANKING_SIZE || time < ranking[ranking.length - 1].time;
 }
 let ranking = loadRanking();
+
+// ------------------------------------------------------------
+//  共有ランキング（Supabase）
+//  ・記録はまずこの端末に保存 → Supabase へ送る（送れなければ、あとで送り直す）
+//  ・表示するのは「Supabase の上位」＋「まだ送れていないこの端末の記録」
+// ------------------------------------------------------------
+const ONLINE = !!(CONFIG.SUPABASE_URL && CONFIG.SUPABASE_KEY);
+const PENDING_KEY = CONFIG.STORAGE_KEY + '_pending';
+const online = { ok: null, busy: false, lastAt: -1e9 }; // ok: null=未確認 true=接続OK false=つながらない
+let serverRanking = [];
+
+function loadPending() {
+  try { const a = JSON.parse(localStorage.getItem(PENDING_KEY) || '[]'); return Array.isArray(a) ? a : []; } catch (e) { return []; }
+}
+function savePending(a) { try { localStorage.setItem(PENDING_KEY, JSON.stringify(a)); } catch (e) {} }
+
+function sbFetch(path, opts) {
+  const key = CONFIG.SUPABASE_KEY;
+  const headers = { apikey: key, 'Content-Type': 'application/json' };
+  if (!key.startsWith('sb_')) headers.Authorization = 'Bearer ' + key; // 古い anon key（JWT）のとき
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 8000);
+  return fetch(CONFIG.SUPABASE_URL.replace(/\/+$/, '') + '/rest/v1/' + path,
+    Object.assign({ signal: ctl.signal }, opts, { headers: Object.assign(headers, (opts && opts.headers) || {}) }))
+    .finally(() => clearTimeout(timer));
+}
+function mergeRanking() {
+  const seen = new Set(), all = [];
+  for (const r of serverRanking.concat(loadPending())) {
+    const id = r.at + ':' + r.time;
+    if (seen.has(id)) continue;
+    seen.add(id); all.push(r);
+  }
+  ranking = all.sort((p, q) => p.time - q.time).slice(0, CONFIG.RANKING_SIZE);
+  saveRanking(ranking);
+  // 結果画面で、自分の記録が何位かを付け直す
+  if (G && G.myEntry) {
+    const i = ranking.findIndex(r => r.at === G.myEntry.at && r.time === G.myEntry.time);
+    G.newIndex = i;
+  }
+}
+async function syncOnline() {
+  if (!ONLINE || online.busy) return;
+  online.busy = true; online.lastAt = performance.now();
+  try {
+    // 1) まだ送れていない記録を送る
+    const pend = loadPending();
+    if (pend.length) {
+      const body = pend.map(r => ({ time: r.time, misses: r.misses | 0, at: r.at }));
+      const res = await sbFetch(CONFIG.SUPABASE_TABLE, { method: 'POST', headers: { Prefer: 'return=minimal' }, body: JSON.stringify(body) });
+      if (!res.ok) throw new Error('insert ' + res.status);
+      const sent = new Set(pend.map(r => r.at + ':' + r.time));
+      savePending(loadPending().filter(r => !sent.has(r.at + ':' + r.time)));
+    }
+    // 2) 上位を読み込む
+    const res = await sbFetch(`${CONFIG.SUPABASE_TABLE}?select=time,misses,at&order=time.asc,at.asc&limit=${CONFIG.RANKING_SIZE}`);
+    if (!res.ok) throw new Error('select ' + res.status);
+    const rows = await res.json();
+    serverRanking = rows.filter(r => r && isFinite(r.time)).map(r => ({ time: Number(r.time), misses: Number(r.misses) || 0, at: Number(r.at) }));
+    online.ok = true;
+  } catch (e) {
+    online.ok = false;
+    console.warn('共有ランキングにつながりません:', e);
+  } finally {
+    online.busy = false;
+    mergeRanking();
+  }
+}
+function submitScore(entry) {
+  if (!ONLINE) return;
+  savePending(loadPending().concat([entry]));
+  syncOnline();
+}
 
 // ============================================================
 //  盤面（ワールド）
@@ -1195,6 +1274,7 @@ function goTitle(now) {
   parts = []; texts = []; shake = 0;
   demo.stage = 0; startDemoStage(now);
   setState('title', now);
+  syncOnline();
 }
 function startDemoStage(now) {
   const st = ALL_STAGES[demo.stage];
@@ -1299,6 +1379,11 @@ function finishGame(now) {
     ranking = r.slice(0, CONFIG.RANKING_SIZE);
     if (G.newIndex >= CONFIG.RANKING_SIZE) G.newIndex = -1;
     saveRanking(ranking);
+  }
+  // 共有ランキングへは、順位に関係なく毎回送る（ほかの端末の記録と比べるため）
+  if (ONLINE) {
+    G.myEntry = { time: G.total, misses: G.misses, at: Date.now() };
+    submitScore(G.myEntry);
   }
   SFX.fanfare();
   spawnConfetti(200);
@@ -1421,7 +1506,7 @@ function handlePress(ev) {
       else if (ev.confirm) {
         if (admin.sel === 0) { SFX.select(); openAdminStages(now); }
         else if (admin.sel === 1) {
-          if (now - admin.clearArmedAt < 3000) { clearRanking(); admin.clearArmedAt = -99999; SFX.buzz(); addText('ランキングを消去しました', VW / 2, 600, '#ff6f8f', 32, 1800); }
+          if (now - admin.clearArmedAt < 3000) { clearRanking(); admin.clearArmedAt = -99999; SFX.buzz(); addText(ONLINE ? 'この端末の記録を消去しました（共有分は Supabase で消してね）' : 'ランキングを消去しました', VW / 2, 600, '#ff6f8f', ONLINE ? 24 : 32, 2400); }
           else { admin.clearArmedAt = now; SFX.select(); }
         } else goTitle(now);
       }
@@ -1733,7 +1818,11 @@ function drawRanking(cx, top, highlight, now) {
   ctx.fillRect(cx - w / 2, top, w, 70 + rowH * CONFIG.RANKING_SIZE);
   ctx.strokeRect(cx - w / 2, top, w, 70 + rowH * CONFIG.RANKING_SIZE);
   ctx.restore();
-  neonText('ランキング', cx, top + 34, 28, '#d6c8ff', 'center', 14);
+  neonText(ONLINE ? 'みんなのランキング' : 'ランキング', cx, top + 34, 28, '#d6c8ff', 'center', 14);
+  if (ONLINE) {
+    const [msg, c] = online.ok === true ? ['● 共有中', '#7dffc8'] : online.ok === false ? ['● つながっていません（この端末の記録を表示中）', '#ff9f6b'] : ['● 接続中…', '#b9a8ff'];
+    plainText(msg, cx + w / 2 - 12, top + 14, 13, c, 'right', 700);
+  }
   for (let i = 0; i < CONFIG.RANKING_SIZE; i++) {
     const y = top + 82 + i * rowH, r = ranking[i];
     const hl = i === highlight && Math.floor(now / 250) % 2 === 0;
@@ -1993,6 +2082,7 @@ window.__game = { CONFIG, LEVELS, get STAGES() { return STAGES; }, pickCourse, G
 // ============================================================
 function frame(now) {
   const raw = Math.max(0, now - lastFrame); lastFrame = now;
+  if (ONLINE && (state === 'title' || state === 'result') && now - online.lastAt > CONFIG.ONLINE_REFRESH_SEC * 1000) syncOnline();
   pollGamepad();
   update(now, raw);
   render(now);
