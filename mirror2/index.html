@@ -18,6 +18,37 @@
 </div>
 <canvas id="game"></canvas>
 <script>
+// ============================================================
+//  スマホを縦に持っているときは、ゲーム画面を90度まわして横向きで表示する
+//  （iPhone でも使えるように、ブラウザの向き固定ではなく画面ごと回す）
+// ============================================================
+function gameRotated() {
+  return !!(window.matchMedia && matchMedia('(pointer: coarse)').matches) && window.innerHeight > window.innerWidth;
+}
+function gameViewW() { return gameRotated() ? window.innerHeight : window.innerWidth; }
+function gameViewH() { return gameRotated() ? window.innerWidth : window.innerHeight; }
+// 画面上の座標 → 要素の中の座標（回しているときは逆回転して計算）
+function gameLocalXY(el, cx, cy) {
+  const r = el.getBoundingClientRect();
+  return gameRotated() ? { x: cy - r.top, y: r.right - cx } : { x: cx - r.left, y: cy - r.top };
+}
+function applyGameRotation() {
+  const b = document.body; if (!b) return;
+  const rot = gameRotated();
+  document.documentElement.classList.toggle('game-rotated', rot);
+  if (rot) {
+    Object.assign(b.style, { position: 'fixed', top: '0', left: '0', margin: '0',
+      width: window.innerHeight + 'px', height: window.innerWidth + 'px',
+      transformOrigin: '0 0', transform: `translateX(${window.innerWidth}px) rotate(90deg)` });
+  } else {
+    for (const k of ['position', 'top', 'left', 'margin', 'width', 'height', 'transformOrigin', 'transform']) b.style[k] = '';
+  }
+}
+applyGameRotation();
+window.addEventListener('resize', applyGameRotation);
+window.addEventListener('orientationchange', () => setTimeout(() => { applyGameRotation(); window.dispatchEvent(new Event('resize')); }, 300));
+</script>
+<script>
 'use strict';
 // ゲームが動いたら「プレビューでは動きません」の案内を消す
 document.getElementById('nojs').remove();
@@ -936,7 +967,7 @@ function makeLayer() {
 }
 
 function resize() {
-  const s = Math.min(window.innerWidth / VW, window.innerHeight / VH);
+  const s = Math.min(gameViewW() / VW, gameViewH() / VH);
   const cw = Math.max(1, Math.floor(VW * s)), ch = Math.max(1, Math.floor(VH * s));
   cv.style.width = cw + 'px'; cv.style.height = ch + 'px';
   const dpr = window.devicePixelRatio || 1;
@@ -2103,6 +2134,96 @@ document.addEventListener('fullscreenchange', () => {
   if (document.fullscreenElement) kb.lock(['Escape']).catch(() => {});
   else kb.unlock();
 });
+
+const TOUCH_CFG = {
+  lockScroll: true, swipe: true, useMenu: true,
+  menuTitle: 'リタイアしますか？', menuNote: '記録は残りません（タイムは止まりません）',
+  audio: () => ensureAudio(),
+  tap: () => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter' })); window.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter' })); },
+  showPause: () => ['ready', 'play', 'fail', 'clear'].includes(state),
+  menuOpen: () => retireAsk,
+  pause: () => handlePress({ esc: true }),
+  resume: () => handlePress({ esc: true }),
+  retire: () => handlePress({ enter: true }),
+};
+// ============================================================
+//  スマホ・タブレット用の操作（指でさわったときだけ出る。パソコンでは今までどおり）
+//  ・スワイプ = 十字キー（1回のスワイプで1回だけ。指を離さずに向きを変えると、もう1回）
+//  ・右上の ⏸ ボタン = 一時停止 → 「つづける / リタイア」
+// ============================================================
+(function () {
+  const T = TOUCH_CFG;
+  const css = document.createElement('style');
+  css.textContent = `
+    ${T.lockScroll ? 'html, body { touch-action: none; overscroll-behavior: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }' : ''}
+    .tc-ui { font-family: 'Yu Gothic UI', 'Meiryo', 'Hiragino Sans', sans-serif; -webkit-tap-highlight-color: transparent; }
+    #tcPause { position: fixed; top: max(10px, env(safe-area-inset-top)); right: max(10px, env(safe-area-inset-right)); z-index: 50;
+      width: 54px; height: 54px; border-radius: 50%; border: 2px solid rgba(255,255,255,.85); background: rgba(0,0,0,.5);
+      color: #fff; font-size: 22px; font-weight: 800; display: none; align-items: center; justify-content: center; padding: 0; touch-action: manipulation; }
+    #tcMenu { position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,.65); display: none; align-items: center; justify-content: center; touch-action: manipulation; }
+    #tcMenu .box { background: #1d1640; border: 3px solid #fff; border-radius: 18px; padding: 20px 22px; text-align: center; color: #fff; width: min(320px, 86vw); }
+    #tcMenu .ttl { font-size: 26px; font-weight: 800; margin: 0 0 4px; }
+    #tcMenu .note { font-size: 14px; opacity: .85; margin: 0 0 8px; }
+    #tcMenu button { display: block; width: 100%; font-size: 20px; font-weight: 800; padding: 14px; margin-top: 10px; border-radius: 12px; border: none; color: #fff; font-family: inherit; }
+    #tcMenu .resume { background: #3f8f4a; }
+    #tcMenu .retire { background: #b8433a; }
+  `;
+  document.head.appendChild(css);
+
+  const pauseBtn = document.createElement('button');
+  pauseBtn.id = 'tcPause'; pauseBtn.className = 'tc-ui'; pauseBtn.textContent = '❚❚'; pauseBtn.setAttribute('aria-label', '一時停止');
+  document.body.appendChild(pauseBtn);
+  const menu = document.createElement('div');
+  menu.id = 'tcMenu'; menu.className = 'tc-ui';
+  menu.innerHTML = `<div class="box"><p class="ttl">${T.menuTitle || '一時停止中'}</p>${T.menuNote ? `<p class="note">${T.menuNote}</p>` : ''}
+    <button class="resume">▶ つづける</button><button class="retire">リタイア</button></div>`;
+  document.body.appendChild(menu);
+
+  let touchMode = window.matchMedia && matchMedia('(pointer: coarse)').matches;
+  const tapAudio = () => { try { T.audio && T.audio(); } catch (e) { } };
+  pauseBtn.addEventListener('click', e => { e.preventDefault(); tapAudio(); T.pause(); });
+  menu.querySelector('.resume').addEventListener('click', e => { e.preventDefault(); T.resume(); });
+  menu.querySelector('.retire').addEventListener('click', e => { e.preventDefault(); T.retire(); });
+
+  // ボタンの表示・非表示
+  (function tick() {
+    const open = !!(T.menuOpen && T.menuOpen());
+    pauseBtn.style.display = touchMode && !open && T.showPause() ? 'flex' : 'none';
+    menu.style.display = touchMode && open && T.useMenu ? 'flex' : 'none';
+    requestAnimationFrame(tick);
+  })();
+
+  // ---- スワイプ → 矢印キー ----
+  const key = (type, k) => window.dispatchEvent(new KeyboardEvent(type, { key: k, code: k, bubbles: true, cancelable: true }));
+  const TH = 28; // これだけ指が動いたらスワイプ
+  let sw = null;
+  document.addEventListener('pointerdown', e => {
+    if (e.pointerType === 'mouse') return;
+    touchMode = true;
+    if (!T.swipe || sw) return;                                   // 2本目の指は無視
+    if (e.target.closest && e.target.closest('.tc-ui')) return;   // ボタンの上は無視
+    if (T.menuOpen && T.menuOpen()) return;
+    sw = { id: e.pointerId, x: e.clientX, y: e.clientY, dir: null, t: performance.now() };
+  }, { passive: true });
+  document.addEventListener('pointermove', e => {
+    if (!sw || e.pointerId !== sw.id) return;
+    const sx = e.clientX - sw.x, sy = e.clientY - sw.y, rot = gameRotated();
+    const dx = rot ? sy : sx, dy = rot ? -sx : sy, ax = Math.abs(dx), ay = Math.abs(dy); // 回している画面では向きを変換
+    if (Math.max(ax, ay) < TH) return;
+    if (sw.dir && Math.max(ax, ay) < Math.min(ax, ay) * 1.5) return; // 斜めっぽいときは向きを変えない
+    const dir = ax > ay ? (dx > 0 ? 'ArrowRight' : 'ArrowLeft') : (dy > 0 ? 'ArrowDown' : 'ArrowUp');
+    if (dir !== sw.dir) { key('keydown', dir); key('keyup', dir); sw.dir = dir; } // 押してすぐ離す＝押しっぱなしにしない
+    sw.x = e.clientX; sw.y = e.clientY; // 指を離さずに向きを変えられるように、基準を今の場所へ
+  }, { passive: true });
+  function end(e) {
+    if (!sw || e.pointerId !== sw.id) return;
+    tapAudio();
+    if (!sw.dir && e.type === 'pointerup' && performance.now() - sw.t < 400 && T.tap && !(T.menuOpen && T.menuOpen())) T.tap();
+    sw = null;
+  }
+  document.addEventListener('pointerup', end);
+  document.addEventListener('pointercancel', end);
+})();
 </script>
 </body>
 </html>
