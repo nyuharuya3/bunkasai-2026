@@ -1,0 +1,2016 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ミラー2匹同時ゴール</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  body { display: flex; align-items: center; justify-content: center; cursor: none; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<div id="nojs" style="max-width:640px;margin:40px auto;padding:24px;color:#fff;background:#1a1240;border:2px solid #7a5cff;border-radius:12px;font:18px/1.7 'Yu Gothic UI','Meiryo',sans-serif;">
+  <h1 style="font-size:26px;margin:0 0 12px;">ミラー2匹同時ゴール</h1>
+  <p>このゲームは、Box などのプレビュー画面では動きません。</p>
+  <p><b>ファイルをダウンロード</b>して、PCに保存した「ミラー2匹同時ゴール.html」を<b>ダブルクリック</b>してください。<br>（Chrome または Edge で開くと遊べます）</p>
+</div>
+<canvas id="game"></canvas>
+<script>
+'use strict';
+// ゲームが動いたら「プレビューでは動きません」の案内を消す
+document.getElementById('nojs').remove();
+
+// ============================================================
+//  調整用の数値（ここを書きかえるとゲームの感触が変わります）
+// ============================================================
+const CONFIG = {
+  MOVE_INTERVAL_MS: 130,      // キーを押し続けたときの移動間隔（ミリ秒）
+  FIRST_REPEAT_DELAY_MS: 200, // 押し始めてから連続移動が始まるまで（ミリ秒）。130にすると最初から130ms間隔
+  MOVE_ANIM_MS: 110,          // 1マス移動のアニメーション時間（ミリ秒）
+  PENALTY_SEC: 3,             // ミス1回あたりのペナルティ（秒）
+  NEAR_MISS_CELLS: 3,         // 残りがこのマス数以内で失敗したら「あと少し！」
+  FAIL_MIN_MS: 200,           // 失敗後、キーで再開できるまでの最短時間（ミリ秒）
+  FAIL_AUTO_RESTART_MS: 1800, // 失敗後、自動で再開するまでの時間（ミリ秒）
+  READY_MS: 1000,             // ステージ開始前の表示時間（ミリ秒）
+  CLEAR_MS: 2200,             // ステージクリア演出の時間（ミリ秒）
+  IDLE_TIMEOUT_SEC: 45,       // 無操作でタイトルに戻るまでの秒数
+  DEMO_STEP_MS: 200,          // タイトルの自動デモの1手の間隔（ミリ秒）
+  RANKING_SIZE: 5,            // ランキングの人数
+  STORAGE_KEY: 'mirror2goal_ranking_v1',
+  RESULT_INPUT_GUARD_MS: 1000,// 結果画面に入ってからキーを受け付けるまでの時間
+  GAMEPAD_DEADZONE: 0.5,      // ゲームパッドのスティック/十字キーのしきい値
+  SOUND_VOLUME: 0.5,          // 全体の音量（0〜1）
+  ADMIN_KEY: 'F2',            // タイトル画面でこのキーを押すと管理メニュー
+};
+
+// ============================================================
+//  ステージデータ（Pythonでランダム生成 → 低温焼きなまし法で最短手数を調整
+//  → 2つの玉を同時に追う幅優先探索でクリア可能を検証済み）
+//  LEVELS[レベル][番号]。ゲーム開始ごとに各レベルから1面ずつランダムに選ぶ
+//  '#' = 壁, '.' = 通路。left = 青の迷路, right = 赤の迷路
+//  solution = 最短解（U上 D下 L左 R右、青から見た向き）
+// ============================================================
+const LEVELS = [
+  // ---- レベル1（最短 16 手）----
+  [
+    { moves: 16, solution: "URURRRRRRRUUUUUU",
+      left: [
+        "###########",
+        "##.####...#",
+        "#.#..##...#",
+        "####..#...#",
+        "#.#...###.#",
+        "#...#.###.#",
+        "#.....#.#.#",
+        "##........#",
+        "#...#.#.#.#",
+        "#.##.###..#",
+        "###########",
+      ],
+      right: [
+        "###########",
+        "#.####.####",
+        "#..#.#....#",
+        "#.#..###.##",
+        "#...##.####",
+        "#.##.#.#..#",
+        "#.#.....###",
+        "#........##",
+        "####.#....#",
+        "##.##..##.#",
+        "###########",
+      ] },
+    { moves: 16, solution: "RRUUURURURRUUURR",
+      left: [
+        "###########",
+        "#..##.....#",
+        "#....##...#",
+        "#.##.##...#",
+        "#...#....##",
+        "#.##...####",
+        "###..#...##",
+        "#......#..#",
+        "#....##.#.#",
+        "#....##..##",
+        "###########",
+      ],
+      right: [
+        "###########",
+        "#...#.#..##",
+        "#.#.###...#",
+        "#...#...#.#",
+        "#......#..#",
+        "#...#....##",
+        "#..#....#.#",
+        "#...##....#",
+        "#..#....###",
+        "#..##.#...#",
+        "###########",
+      ] },
+    { moves: 16, solution: "URRRRURURUUUUURR",
+      left: [
+        "###########",
+        "#..#......#",
+        "#.........#",
+        "#.#.#...#.#",
+        "##..#...###",
+        "#...###...#",
+        "#..#....#.#",
+        "##.#....###",
+        "#.......###",
+        "#..#####.##",
+        "###########",
+      ],
+      right: [
+        "###########",
+        "#.....#.###",
+        "#.....#..##",
+        "###.#.#.#.#",
+        "#.#....####",
+        "##....#.#.#",
+        "#....###..#",
+        "#.....#####",
+        "###.#.....#",
+        "##.#.##...#",
+        "###########",
+      ] },
+    { moves: 16, solution: "URUURRRRRRURUUUU",
+      left: [
+        "###########",
+        "#....#..#.#",
+        "####.#.#..#",
+        "#.#..##.#.#",
+        "###.##.##.#",
+        "###.......#",
+        "##........#",
+        "##..#..####",
+        "#..##...#.#",
+        "#..#.....##",
+        "###########",
+      ],
+      right: [
+        "###########",
+        "#.##.#.#.##",
+        "#.......###",
+        "#.###.#..##",
+        "#..##..####",
+        "#..#......#",
+        "##........#",
+        "#.#.##...##",
+        "#..#...#..#",
+        "###..#..#.#",
+        "###########",
+      ] },
+    { moves: 16, solution: "RRRRUUUUUUUURRRR",
+      left: [
+        "###########",
+        "##.#......#",
+        "#.....#.#.#",
+        "#......#..#",
+        "#.##..#.###",
+        "##.#....#.#",
+        "##..#..#..#",
+        "##..#.##..#",
+        "#.#.#..#..#",
+        "#........##",
+        "###########",
+      ],
+      right: [
+        "###########",
+        "#......#.##",
+        "#...#..##.#",
+        "#.....#.###",
+        "##.#..#...#",
+        "#......#.##",
+        "##..#...#.#",
+        "#...#.....#",
+        "#...#..####",
+        "#..#......#",
+        "###########",
+      ] },
+    { moves: 16, solution: "RRUUURRUUURRRURU",
+      left: [
+        "###########",
+        "###.##.##.#",
+        "#.....##..#",
+        "#.........#",
+        "#.##..##..#",
+        "#..##.##.##",
+        "#.#....##.#",
+        "#....#..###",
+        "#.#.#.#...#",
+        "#...#.#.#.#",
+        "###########",
+      ],
+      right: [
+        "###########",
+        "#.#.##..###",
+        "#..#......#",
+        "#.....###.#",
+        "#.###.#.#.#",
+        "#.........#",
+        "#..#....#.#",
+        "##..#.#...#",
+        "##.#.##.###",
+        "#..####...#",
+        "###########",
+      ] },
+  ],
+  // ---- レベル2（最短 20 手）----
+  [
+    { moves: 20, solution: "RRRUUURRRDRRUUUULUUR",
+      left: [
+        "###########",
+        "###.#.....#",
+        "#.#.##.#.##",
+        "###.#..#..#",
+        "#.#.#...#.#",
+        "###.##....#",
+        "##......#.#",
+        "##...##...#",
+        "##.#..#####",
+        "#....###..#",
+        "###########",
+      ],
+      right: [
+        "###########",
+        "#..##..##.#",
+        "#...#....##",
+        "#....####.#",
+        "#...#.....#",
+        "#.##.#.#..#",
+        "#.........#",
+        "#....#..###",
+        "###.....###",
+        "#####.....#",
+        "###########",
+      ] },
+    { moves: 20, solution: "URRURURRUULLUURRRURR",
+      left: [
+        "###########",
+        "##.##.#...#",
+        "#.#.......#",
+        "##...#..#.#",
+        "#..#...####",
+        "#.#.......#",
+        "#..#....###",
+        "###..##...#",
+        "#....##..##",
+        "#.#.......#",
+        "###########",
+      ],
+      right: [
+        "###########",
+        "#.....###.#",
+        "#.#.......#",
+        "###.#..#..#",
+        "###....#..#",
+        "#..#.######",
+        "###.....###",
+        "#.#.##...##",
+        "##.#.#....#",
+        "#.###.#.#.#",
+        "###########",
+      ] },
+    { moves: 20, solution: "UURRDRRUUULUURRRRRUU",
+      left: [
+        "###########",
+        "#...#.###.#",
+        "#...#...#.#",
+        "###.......#",
+        "###..#.#..#",
+        "#..#..#####",
+        "#..#...#.##",
+        "#...#..#.##",
+        "#.#......##",
+        "#.#....##.#",
+        "###########",
+      ],
+      right: [
+        "###########",
+        "#.##..###.#",
+        "#......####",
+        "#.......#.#",
+        "###......##",
+        "#...#.....#",
+        "####..##.##",
+        "##.#..#...#",
+        "##.##.....#",
+        "#.#.##....#",
+        "###########",
+      ] },
+    { moves: 20, solution: "RRRRRURUULLUURURURUR",
+      left: [
+        "###########",
+        "#.####.#..#",
+        "#.###.#...#",
+        "##...#..#.#",
+        "#..#.....##",
+        "#####.#.#.#",
+        "###.#....##",
+        "#....#...##",
+        "##..#....##",
+        "#......#.##",
+        "###########",
+      ],
+      right: [
+        "###########",
+        "#.....#...#",
+        "##...#.#..#",
+        "#.....#.#.#",
+        "####..#.###",
+        "#.##....###",
+        "##....#####",
+        "#.#.#...###",
+        "#....#..###",
+        "#.........#",
+        "###########",
+      ] },
+    { moves: 20, solution: "URRDRRRURRUUULUUURRU",
+      left: [
+        "###########",
+        "#..######.#",
+        "##.#.##...#",
+        "#.#####...#",
+        "##........#",
+        "#..##.#...#",
+        "#..###.#..#",
+        "#...##.#..#",
+        "#....#...##",
+        "#.#....####",
+        "###########",
+      ],
+      right: [
+        "###########",
+        "#.#..#.####",
+        "#...#######",
+        "###.#...###",
+        "###...#####",
+        "##..###...#",
+        "##.####...#",
+        "#.....#.#.#",
+        "##........#",
+        "#.#.......#",
+        "###########",
+      ] },
+    { moves: 20, solution: "RRRRUUURRRRUUULLUURR",
+      left: [
+        "###########",
+        "###.##....#",
+        "#....#...##",
+        "#######...#",
+        "##.#..#.#.#",
+        "##.#####..#",
+        "#.##......#",
+        "#..##.##..#",
+        "###.#.#.#.#",
+        "#.....#..##",
+        "###########",
+      ],
+      right: [
+        "###########",
+        "#...##.##.#",
+        "#.#.#.#####",
+        "#...#..##.#",
+        "#.##.##.###",
+        "#.#...#.#.#",
+        "#........##",
+        "#####....##",
+        "##.##...###",
+        "#...#.....#",
+        "###########",
+      ] },
+  ],
+  // ---- レベル3（最短 28 手）----
+  [
+    { moves: 28, solution: "RUURRDRRUULULLLUUURRDRRURRRU",
+      left: [
+        "###########",
+        "#..#....#.#",
+        "#....#....#",
+        "#..#....#.#",
+        "##.##...#.#",
+        "##....##..#",
+        "#####..#.##",
+        "#.........#",
+        "##.......##",
+        "#..##.#..##",
+        "###########",
+      ],
+      right: [
+        "###########",
+        "#.....##..#",
+        "#........##",
+        "##.....#..#",
+        "#.##.###..#",
+        "###.#.....#",
+        "#.....#..##",
+        "#.##.#...##",
+        "##.#...#.##",
+        "#.####.#..#",
+        "###########",
+      ] },
+    { moves: 28, solution: "URRDRRRUURUUULLLLUUURRRDRRUR",
+      left: [
+        "###########",
+        "##........#",
+        "###.##....#",
+        "#....#.####",
+        "###......##",
+        "####.#..###",
+        "###..##.#.#",
+        "#.###....##",
+        "#....#...##",
+        "#.#....####",
+        "###########",
+      ],
+      right: [
+        "###########",
+        "#..#......#",
+        "#....#....#",
+        "#.#.###.###",
+        "##........#",
+        "###...###.#",
+        "#.#..##.###",
+        "#....#.#.##",
+        "#.....#...#",
+        "###.......#",
+        "###########",
+      ] },
+    { moves: 28, solution: "URUULUURRURUURRDDDDRDRRUUUUU",
+      left: [
+        "###########",
+        "#.##...##.#",
+        "#..#.#....#",
+        "###..#..#.#",
+        "#...##..#.#",
+        "#....#..#.#",
+        "#...###...#",
+        "##..#.....#",
+        "#..#..#...#",
+        "#.###....##",
+        "###########",
+      ],
+      right: [
+        "###########",
+        "#......#.##",
+        "#.##.#..###",
+        "#....#..###",
+        "#.#...#...#",
+        "#.#...###.#",
+        "#...#.....#",
+        "######.#..#",
+        "##...###..#",
+        "#..####.#.#",
+        "###########",
+      ] },
+    { moves: 28, solution: "RURUUUURRDDRDDRRRUULUULUUURR",
+      left: [
+        "###########",
+        "#.#.#.#...#",
+        "##...#..###",
+        "####....#.#",
+        "#.#...#...#",
+        "##....##.##",
+        "#.#.......#",
+        "##..##..#.#",
+        "#...##....#",
+        "#..#.##.#.#",
+        "###########",
+      ],
+      right: [
+        "###########",
+        "#...#..#.##",
+        "#........##",
+        "##..#####.#",
+        "#...#....##",
+        "#..#..#...#",
+        "#..#..#..##",
+        "#.....#.#.#",
+        "#........##",
+        "#.##.#....#",
+        "###########",
+      ] },
+    { moves: 28, solution: "RUUURRDRRDRRUUULLUULLUURRRRR",
+      left: [
+        "###########",
+        "####......#",
+        "#....#....#",
+        "###....#..#",
+        "#.#.##..#.#",
+        "#.###....##",
+        "##...#...##",
+        "##.....#..#",
+        "##..#.....#",
+        "#....###..#",
+        "###########",
+      ],
+      right: [
+        "###########",
+        "#......#.##",
+        "#####..#..#",
+        "##.....##.#",
+        "#.##.##.###",
+        "#....###..#",
+        "#...#....##",
+        "#..#...#..#",
+        "#....###..#",
+        "##.##.#...#",
+        "###########",
+      ] },
+    { moves: 28, solution: "RUUURRDRRDDRRRUUUUULLLUURRUR",
+      left: [
+        "###########",
+        "#.##...#..#",
+        "###.##...##",
+        "###....##.#",
+        "###.##....#",
+        "#....#.##.#",
+        "#....###..#",
+        "#.........#",
+        "##..#...#.#",
+        "#...#.....#",
+        "###########",
+      ],
+      right: [
+        "###########",
+        "#...##.##.#",
+        "#....#..#.#",
+        "####.##..##",
+        "#......#.##",
+        "#.#.##..###",
+        "#.#..#...##",
+        "#..#...#..#",
+        "#.#..#.#.##",
+        "#......#..#",
+        "###########",
+      ] },
+  ],
+  // ---- レベル4（最短 38 手）----
+  [
+    { moves: 38, solution: "UUURRDDDRRURRDRRUUULULLLUULLUURRRRDRRU",
+      left: [
+        "###########",
+        "###.....#.#",
+        "##..###...#",
+        "##....###.#",
+        "#.##..##.##",
+        "##.##....##",
+        "#....#.#..#",
+        "#.#.##..#.#",
+        "#.#.......#",
+        "#.........#",
+        "###########",
+      ],
+      right: [
+        "###########",
+        "#.#.....#.#",
+        "#...#....##",
+        "###.#...#.#",
+        "###....#.##",
+        "#......####",
+        "#...##....#",
+        "#..#....#.#",
+        "#.#...#...#",
+        "#...#...#.#",
+        "###########",
+      ] },
+    { moves: 38, solution: "RUURRDDRRURURUUULLLDLLLULUURRRURRRDRRU",
+      left: [
+        "###########",
+        "#.##....#.#",
+        "#.....#...#",
+        "#..#.####.#",
+        "#...#....##",
+        "#.....##..#",
+        "###.#.##.##",
+        "#....##...#",
+        "##.#.#..###",
+        "#......#..#",
+        "###########",
+      ],
+      right: [
+        "###########",
+        "#.#.......#",
+        "#....#....#",
+        "#.###.###.#",
+        "##....##..#",
+        "##........#",
+        "##...###..#",
+        "##..##...##",
+        "##...#....#",
+        "##.....#..#",
+        "###########",
+      ] },
+    { moves: 38, solution: "UUUUURRDDDDDRRUURRDDRRUUUULLUULLUURRRR",
+      left: [
+        "###########",
+        "####......#",
+        "####..#...#",
+        "#.###...###",
+        "#....#..###",
+        "#...#.....#",
+        "#...#.###.#",
+        "#.#.#.....#",
+        "#.......#.#",
+        "#.........#",
+        "###########",
+      ],
+      right: [
+        "###########",
+        "#.......###",
+        "##.#..#..##",
+        "#.......#.#",
+        "###..#....#",
+        "#...###.#.#",
+        "#.####..#.#",
+        "#.#...#.#.#",
+        "#.#.#.#.#.#",
+        "#...#...#.#",
+        "###########",
+      ] },
+    { moves: 38, solution: "UUUURRRDDDDRRRRUURUULULLULLLUURRRRDRRU",
+      left: [
+        "###########",
+        "##......#.#",
+        "#.#.###...#",
+        "##.....####",
+        "#....#...##",
+        "#....#....#",
+        "#....##.#.#",
+        "#......#..#",
+        "#..#...#.##",
+        "#..#.....##",
+        "###########",
+      ],
+      right: [
+        "###########",
+        "#........##",
+        "#...##....#",
+        "###.....###",
+        "##....###.#",
+        "#..###....#",
+        "#.###..#..#",
+        "#..#...#..#",
+        "##.##..##.#",
+        "##.....##.#",
+        "###########",
+      ] },
+    { moves: 38, solution: "UURRDRDRRRUULLUUULLULLUURRRRRDDRDRRUUU",
+      left: [
+        "###########",
+        "#.........#",
+        "#.###..#..#",
+        "#...##..#.#",
+        "###.......#",
+        "#...#...#.#",
+        "#..##.#...#",
+        "#...#...###",
+        "#.#..#....#",
+        "#.##.....##",
+        "###########",
+      ],
+      right: [
+        "###########",
+        "#.#.......#",
+        "#.#..##.#.#",
+        "#.#..#....#",
+        "#...#...###",
+        "##.##....##",
+        "##.##.#####",
+        "##....#...#",
+        "#.#.##....#",
+        "###....##.#",
+        "###########",
+      ] },
+    { moves: 38, solution: "URRDRRRUULULULULULUURRDRRRDDDRRRUULUUR",
+      left: [
+        "###########",
+        "#...#.##..#",
+        "#......#.##",
+        "#..##.....#",
+        "##..#.....#",
+        "###.......#",
+        "#..#..#.###",
+        "#..#...#..#",
+        "#....#.#..#",
+        "#.#.....###",
+        "###########",
+      ],
+      right: [
+        "###########",
+        "#...##....#",
+        "##......#.#",
+        "#..#.#.#..#",
+        "#.##......#",
+        "#....#..#.#",
+        "#####..####",
+        "###...#.#.#",
+        "###...#...#",
+        "#.#.......#",
+        "###########",
+      ] },
+  ],
+  // ---- レベル5（最短 48 手）----
+  [
+    { moves: 48, solution: "UUURUULUUURRRDDDDRDDLLDDRRRRRRUULLUURRUULLLUURRR",
+      left: [
+        "###########",
+        "#.........#",
+        "#.##.#.####",
+        "#.........#",
+        "#....#..#.#",
+        "##.#..#...#",
+        "#...#.#.###",
+        "#.....#...#",
+        "#.#.##....#",
+        "#.#.......#",
+        "###########",
+      ],
+      right: [
+        "###########",
+        "#....#....#",
+        "#.#.....#.#",
+        "#....#.##.#",
+        "#.##.#.#..#",
+        "#......#.##",
+        "###.#.##..#",
+        "#.......#.#",
+        "#.##....#.#",
+        "#.......#.#",
+        "###########",
+      ] },
+    { moves: 48, solution: "RRRUULLLUUUUUURRDDDRDRDRDDDRRRUUUULULLULUURRDRRU",
+      left: [
+        "###########",
+        "#...#.....#",
+        "#.#.#.#...#",
+        "#.#....##.#",
+        "#.#..#....#",
+        "#.##..##..#",
+        "#.......#.#",
+        "#....#.#..#",
+        "###..#..#.#",
+        "#.........#",
+        "###########",
+      ],
+      right: [
+        "###########",
+        "#.#.......#",
+        "#.....#.#.#",
+        "#..#..#...#",
+        "##......#.#",
+        "#..##...#.#",
+        "#..#..###.#",
+        "#..#.#....#",
+        "#..#.#.#.##",
+        "#....#....#",
+        "###########",
+      ] },
+    { moves: 48, solution: "RRUULLUURRUULLUURRRRDRDDLDDDDDRRRRUULLUURRUULUUR",
+      left: [
+        "###########",
+        "#.....#...#",
+        "#...#..#.##",
+        "#...##....#",
+        "#...#..#..#",
+        "#...#.#...#",
+        "#..#..#.###",
+        "#...#.#...#",
+        "#...#.###.#",
+        "#...#.....#",
+        "###########",
+      ],
+      right: [
+        "###########",
+        "#..##.....#",
+        "##.#...##.#",
+        "#..#.##...#",
+        "#.##....###",
+        "#.........#",
+        "###...###.#",
+        "#...#.....#",
+        "#...#...###",
+        "#.....#...#",
+        "###########",
+      ] },
+    { moves: 48, solution: "UUUURRUULLUURRRRRRDDLDLDDLDLDDRRRRRRUULLUURURUUU",
+      left: [
+        "###########",
+        "#.......#.#",
+        "#..####.#.#",
+        "#.........#",
+        "###.#..#..#",
+        "#.....#..##",
+        "#..#..#.#.#",
+        "#.#..##...#",
+        "#.#..#....#",
+        "#.#.......#",
+        "###########",
+      ],
+      right: [
+        "###########",
+        "#.#.......#",
+        "#....#..#.#",
+        "#.#..##...#",
+        "#.....#..##",
+        "##....#...#",
+        "##........#",
+        "#...#.....#",
+        "#.#####.#.#",
+        "#.........#",
+        "###########",
+      ] },
+    { moves: 48, solution: "RUULUUUURURURRRDDLLDLDDRDDRDRRRRUULLLUURRRUULUUR",
+      left: [
+        "###########",
+        "###....#..#",
+        "##..#..#.##",
+        "#......#..#",
+        "#....##.#.#",
+        "#....#....#",
+        "#.#..#.####",
+        "#..#.#....#",
+        "#.........#",
+        "#.........#",
+        "###########",
+      ],
+      right: [
+        "###########",
+        "#..#......#",
+        "##...##..##",
+        "#..#...#..#",
+        "#.###...#.#",
+        "#.....#.#.#",
+        "####.#....#",
+        "#.........#",
+        "#.###..#.##",
+        "#.....#...#",
+        "###########",
+      ] },
+    { moves: 48, solution: "UURRDDRRRRRRUULLLLULUULLULUURRDRRURRDDLDDRRRUUUU",
+      left: [
+        "###########",
+        "#...#...#.#",
+        "#.#...#...#",
+        "#....#..#.#",
+        "#....#..#.#",
+        "####.#....#",
+        "##.#...####",
+        "#...#.....#",
+        "#...#.###.#",
+        "#.#.......#",
+        "###########",
+      ],
+      right: [
+        "###########",
+        "#.........#",
+        "#.#.#...#.#",
+        "#.#...##..#",
+        "#.##......#",
+        "#....#.#.##",
+        "#.#.#....##",
+        "#.........#",
+        "#.##.##.#.#",
+        "#.........#",
+        "###########",
+      ] },
+  ],
+];
+
+// 各ステージにレベルと番号をつける（例: id '3-2' = レベル3の2番目）
+LEVELS.forEach((list, lv) => list.forEach((st, no) => { st.lv = lv; st.no = no; st.id = `${lv + 1}-${no + 1}`; }));
+const ALL_STAGES = LEVELS.flat();
+let STAGES = LEVELS.map(list => list[0]);   // いま遊んでいるコース（5面）
+const lastPick = LEVELS.map(() => -1);
+function pickCourse() {
+  // 各レベルからランダムに1面。前回と同じ面はなるべく避ける
+  return LEVELS.map((list, lv) => {
+    let k = Math.floor(Math.random() * list.length);
+    if (list.length > 1 && k === lastPick[lv]) k = (k + 1 + Math.floor(Math.random() * (list.length - 1))) % list.length;
+    lastPick[lv] = k;
+    return list[k];
+  });
+}
+
+// ============================================================
+//  定数
+// ============================================================
+const VW = 1400, VH = 800, N = 11, CS = 56;
+const MAZE_X = [64, 720], MAZE_Y = 128;
+const START = [{ x: 1, y: 9 }, { x: 9, y: 9 }];
+const GOAL  = [{ x: 9, y: 1 }, { x: 1, y: 1 }];
+const BALL_COL  = ['#3fd0ff', '#ff3f6e'];
+const BALL_DARK = ['#0a3a8a', '#7a0a26'];
+const WALL_COL  = ['#2f8bff', '#ff2f8a'];
+const WALL_RGB  = ['47,139,255', '255,47,138'];
+const DIRV = { U: [0, -1], D: [0, 1], L: [-1, 0], R: [1, 0] };
+const ARROW = { U: '↑', D: '↓', L: '←', R: '→' };
+const MIRROR = { U: 'U', D: 'D', L: 'R', R: 'L' };
+const FONT = '"Yu Gothic UI","Meiryo","Hiragino Sans",sans-serif';
+const TAU = Math.PI * 2;
+
+// ============================================================
+//  キャンバスと拡大縮小
+// ============================================================
+const cv = document.getElementById('game');
+const ctx = cv.getContext('2d');
+let K = 1;          // 仮想座標 → 実ピクセル の倍率
+let bgCv = null;    // 背景のキャッシュ
+
+function makeLayer() {
+  const c = document.createElement('canvas');
+  c.width = cv.width; c.height = cv.height;
+  const x = c.getContext('2d');
+  x.setTransform(K, 0, 0, K, 0, 0);
+  return [c, x];
+}
+
+function resize() {
+  const s = Math.min(window.innerWidth / VW, window.innerHeight / VH);
+  const cw = Math.max(1, Math.floor(VW * s)), ch = Math.max(1, Math.floor(VH * s));
+  cv.style.width = cw + 'px'; cv.style.height = ch + 'px';
+  const dpr = window.devicePixelRatio || 1;
+  cv.width = Math.round(cw * dpr); cv.height = Math.round(ch * dpr);
+  K = cv.width / VW;
+  bgCv = renderBg();
+  if (W.grid) W.mazeCv = renderMaze();
+}
+
+// ============================================================
+//  音（WebAudioで合成）
+// ============================================================
+let actx = null, master = null, noiseBuf = null;
+function ensureAudio() {
+  try {
+    if (!actx) {
+      actx = new (window.AudioContext || window.webkitAudioContext)();
+      master = actx.createGain();
+      master.gain.value = CONFIG.SOUND_VOLUME;
+      master.connect(actx.destination);
+      noiseBuf = actx.createBuffer(1, actx.sampleRate, actx.sampleRate);
+      const d = noiseBuf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    }
+    if (actx.state === 'suspended') actx.resume();
+  } catch (e) { actx = null; }
+}
+function soundOn() { return actx && !W.demo; }
+function tone(freq, dur, type, vol, delay = 0, slide = null) {
+  if (!soundOn()) return;
+  const t = actx.currentTime + delay;
+  const o = actx.createOscillator(), g = actx.createGain();
+  o.type = type;
+  o.frequency.setValueAtTime(freq, t);
+  if (slide) o.frequency.exponentialRampToValueAtTime(slide, t + dur);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(vol, t + 0.008);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g); g.connect(master);
+  o.start(t); o.stop(t + dur + 0.03);
+}
+function noise(dur, vol, delay, freq, ftype = 'lowpass') {
+  if (!soundOn()) return;
+  const t = actx.currentTime + delay;
+  const s = actx.createBufferSource(), f = actx.createBiquadFilter(), g = actx.createGain();
+  s.buffer = noiseBuf; f.type = ftype; f.frequency.value = freq;
+  g.gain.setValueAtTime(vol, t);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  s.connect(f); f.connect(g); g.connect(master);
+  s.start(t); s.stop(t + dur + 0.03);
+}
+const SFX = {
+  move()   { tone(700, 0.05, 'triangle', 0.07); tone(466, 0.05, 'triangle', 0.06); },
+  buzz()   { tone(98, 0.5, 'sawtooth', 0.3, 0, 60); tone(104, 0.5, 'square', 0.2, 0, 64); noise(0.3, 0.5, 0.05, 1500); },
+  near()   { tone(392, 0.16, 'triangle', 0.25, 0.4); tone(370, 0.45, 'triangle', 0.25, 0.58, 280); },
+  giri()   { noise(0.12, 0.3, 0, 4000, 'highpass'); tone(2000, 0.09, 'square', 0.07, 0, 3000); },
+  clear()  { [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.15, 'square', 0.12, i * 0.08));
+             tone(1047, 0.6, 'triangle', 0.18, 0.34); tone(1319, 0.6, 'triangle', 0.14, 0.34); tone(1568, 0.6, 'triangle', 0.12, 0.34); },
+  fanfare(){ const n = [523, 523, 523, 659, 784, 659, 784, 1047];
+             const d = [0, 0.12, 0.24, 0.36, 0.6, 0.84, 0.96, 1.2];
+             n.forEach((f, i) => tone(f, i === 7 ? 0.9 : 0.2, 'square', 0.12, d[i]));
+             tone(523, 1.0, 'triangle', 0.15, 1.2); tone(659, 1.0, 'triangle', 0.12, 1.2); },
+  select() { tone(880, 0.06, 'square', 0.08); },
+  start()  { tone(330, 0.3, 'sawtooth', 0.12, 0, 990); tone(660, 0.25, 'triangle', 0.12, 0.25); },
+  ready()  { tone(1047, 0.12, 'square', 0.08); },
+};
+
+// ============================================================
+//  ランキング（localStorage）
+// ============================================================
+function loadRanking() {
+  try {
+    const a = JSON.parse(localStorage.getItem(CONFIG.STORAGE_KEY) || '[]');
+    if (Array.isArray(a)) {
+      return a.filter(r => r && typeof r.time === 'number' && isFinite(r.time))
+              .sort((p, q) => p.time - q.time).slice(0, CONFIG.RANKING_SIZE);
+    }
+  } catch (e) { /* 壊れたデータは無視 */ }
+  return [];
+}
+function saveRanking(r) {
+  try { localStorage.setItem(CONFIG.STORAGE_KEY, JSON.stringify(r)); } catch (e) { /* 保存できない環境 */ }
+}
+function clearRanking() {
+  try { localStorage.removeItem(CONFIG.STORAGE_KEY); } catch (e) {}
+  ranking = [];
+}
+function isRankIn(time) {
+  return ranking.length < CONFIG.RANKING_SIZE || time < ranking[ranking.length - 1].time;
+}
+let ranking = loadRanking();
+
+// ============================================================
+//  盤面（ワールド）
+// ============================================================
+const W = { idx: 0, st: null, grid: null, balls: [], hitWalls: [], mazeCv: null, demo: false, lastDir: null, lastDirAt: -9999, moveTimes: [] };
+
+function parseStage(s) {
+  return [s.left.map(r => r.split('')), s.right.map(r => r.split(''))];
+}
+function isWall(m, x, y) {
+  if (x < 0 || y < 0 || x >= N || y >= N) return true;
+  return W.grid[m][y][x] === '#';
+}
+function mkBall(m) {
+  const p = START[m];
+  return { m, x: p.x, y: p.y, fx: p.x, fy: p.y, t0: -9999, bump: null, dead: false, trail: [] };
+}
+function loadStage(i, st = STAGES[i]) {
+  W.idx = i;
+  W.st = st;
+  W.grid = parseStage(st);
+  W.mazeCv = renderMaze();
+  resetBalls();
+}
+function resetBalls() {
+  W.balls = [mkBall(0), mkBall(1)];
+  W.hitWalls = [];
+  W.lastDir = null;
+}
+function easeOut(t) { return 1 - Math.pow(1 - t, 3); }
+function ballPos(b, now) {
+  if (b.bump) {
+    const t = Math.min(1, (now - b.t0) / 70);
+    return { x: b.x + b.bump[0] * 0.32 * t, y: b.y + b.bump[1] * 0.32 * t };
+  }
+  const t = Math.min(1, Math.max(0, (now - b.t0) / CONFIG.MOVE_ANIM_MS));
+  const e = easeOut(t);
+  return { x: b.fx + (b.x - b.fx) * e, y: b.fy + (b.y - b.fy) * e };
+}
+function cellCenter(m, x, y) {
+  return { x: MAZE_X[m] + (x + 0.5) * CS, y: MAZE_Y + (y + 0.5) * CS };
+}
+function moveBall(b, nx, ny, now) {
+  b.fx = b.x; b.fy = b.y; b.x = nx; b.y = ny; b.t0 = now;
+}
+function dist(b, g) { return Math.abs(b.x - g.x) + Math.abs(b.y - g.y); }
+function atGoal(b) { return b.x === GOAL[b.m].x && b.y === GOAL[b.m].y; }
+
+// 両方の玉が「両側を壁に挟まれた細い通路」にいるか
+function isNarrow(b, dx, dy) {
+  if (dy === 0) return isWall(b.m, b.x, b.y - 1) && isWall(b.m, b.x, b.y + 1);
+  return isWall(b.m, b.x - 1, b.y) && isWall(b.m, b.x + 1, b.y);
+}
+
+// 1手動かす。戻り値: 'ok' | 'fail' | 'clear'
+function doMove(dir, now) {
+  const [dx, dy] = DIRV[dir];
+  const B = W.balls[0], R = W.balls[1];
+  const nb = [B.x + dx, B.y + dy], nr = [R.x - dx, R.y + dy];
+  const hitB = isWall(0, nb[0], nb[1]), hitR = isWall(1, nr[0], nr[1]);
+  W.lastDir = dir; W.lastDirAt = now;
+  G.steps++;
+  W.moveTimes.push(now); if (W.moveTimes.length > 20) W.moveTimes.shift();
+  if (hitB || hitR) {
+    const remain = dist(B, GOAL[0]) + dist(R, GOAL[1]);
+    W.hitWalls = [];
+    if (hitB) { B.bump = [dx, dy]; B.t0 = now; W.hitWalls.push({ m: 0, x: nb[0], y: nb[1] }); }
+    else moveBall(B, nb[0], nb[1], now);
+    if (hitR) { R.bump = [-dx, dy]; R.t0 = now; W.hitWalls.push({ m: 1, x: nr[0], y: nr[1] }); }
+    else moveBall(R, nr[0], nr[1], now);
+    onFail(now, remain);
+    return 'fail';
+  }
+  moveBall(B, nb[0], nb[1], now);
+  moveBall(R, nr[0], nr[1], now);
+  SFX.move();
+  if (isNarrow(B, dx, dy) && isNarrow(R, dx, dy)) {
+    spawnSparks(B, dx, dy); spawnSparks(R, -dx, dy);
+    if (now - lastGiriAt > 350) {
+      addText('ギリギリ！', VW / 2, MAZE_Y + 300, '#ffe14d', 46, 650);
+      lastGiriAt = now;
+    }
+    SFX.giri();
+  }
+  if (atGoal(B) && atGoal(R)) return 'clear';
+  return 'ok';
+}
+let lastGiriAt = -9999;
+
+// ============================================================
+//  パーティクルと浮かぶ文字
+// ============================================================
+let parts = [], texts = [], shake = 0;
+function rnd(a, b) { return a + Math.random() * (b - a); }
+
+function spawnShatter(b, now) {
+  const p = ballPos(b, now), c = cellCenter(b.m, p.x, p.y);
+  for (let i = 0; i < 26; i++) {
+    const a = rnd(0, TAU), sp = rnd(0.12, 0.55);
+    parts.push({ k: 'shard', x: c.x, y: c.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 0.1, g: 0.0009,
+      r: rnd(0, TAU), vr: rnd(-0.02, 0.02), s: rnd(4, 11), col: i % 4 === 0 ? '#ffffff' : BALL_COL[b.m], life: rnd(700, 1200), max: 1200 });
+  }
+  parts.push({ k: 'ring', x: c.x, y: c.y, s: 10, col: '#ff3030', life: 450, max: 450 });
+  parts.push({ k: 'ring', x: c.x, y: c.y, s: 4, col: BALL_COL[b.m], life: 600, max: 600 });
+}
+function spawnSparks(b, dx, dy) {
+  const c = cellCenter(b.m, b.x, b.y);
+  for (let i = 0; i < 16; i++) {
+    const side = i % 2 ? 1 : -1;
+    // 移動方向に垂直（壁のほう）へ飛ぶ
+    const px = dy === 0 ? 0 : side, py = dy === 0 ? side : 0;
+    const a = Math.atan2(py, px) + rnd(-0.7, 0.7) + Math.atan2(-dy, -dx) * 0;
+    const sp = rnd(0.25, 0.6);
+    parts.push({ k: 'spark', x: c.x + px * CS * 0.3, y: c.y + py * CS * 0.3, vx: Math.cos(a) * sp - dx * 0.15, vy: Math.sin(a) * sp - dy * 0.15,
+      g: 0.0006, col: i % 3 ? '#ffe066' : '#ffffff', life: rnd(220, 420), max: 420 });
+  }
+}
+const CONF_COLS = ['#ff4f7a', '#ffd84f', '#4fffb0', '#4fc3ff', '#c84fff', '#ffffff', '#ff9f40'];
+function spawnConfetti(amount) {
+  for (let i = 0; i < amount; i++) {
+    const fromTop = i % 2 === 0;
+    const x = fromTop ? rnd(0, VW) : (i % 4 === 1 ? 120 : VW - 120);
+    const y = fromTop ? rnd(-120, -10) : VH;
+    const vx = fromTop ? rnd(-0.08, 0.08) : (x < VW / 2 ? rnd(0.1, 0.55) : rnd(-0.55, -0.1));
+    const vy = fromTop ? rnd(0.05, 0.25) : rnd(-1.0, -0.55);
+    parts.push({ k: 'conf', x, y, vx, vy, g: 0.0006, drag: 0.996, r: rnd(0, TAU), vr: rnd(-0.015, 0.015),
+      w: rnd(7, 14), h: rnd(4, 8), wob: rnd(0, TAU), col: CONF_COLS[i % CONF_COLS.length], life: rnd(2400, 3600), max: 3600 });
+  }
+}
+function addText(text, x, y, col, size, life) {
+  texts.push({ text, x, y, col, size, life, max: life });
+}
+function updateParts(dt) {
+  for (const p of parts) {
+    p.life -= dt;
+    if (p.k === 'ring') { p.s += dt * 0.25; continue; }
+    p.vy += (p.g || 0) * dt;
+    if (p.drag) { p.vx *= Math.pow(p.drag, dt / 16); p.vy *= Math.pow(p.drag, dt / 16); p.vy = Math.min(p.vy, 0.3); }
+    p.x += p.vx * dt; p.y += p.vy * dt;
+    if (p.vr) p.r += p.vr * dt;
+    if (p.wob !== undefined) p.wob += dt * 0.01;
+  }
+  parts = parts.filter(p => p.life > 0);
+  for (const t of texts) { t.life -= dt; t.y -= dt * 0.04; }
+  texts = texts.filter(t => t.life > 0);
+  shake *= Math.pow(0.9, dt / 16);
+  if (shake < 0.3) shake = 0;
+}
+
+// ============================================================
+//  ゲームの状態
+// ============================================================
+// title → ready → play ⇄ fail → clear → ready … → result → ranking → title
+let state = 'title', stateT = 0;
+const G = { elapsed: 0, penalty: 0, misses: 0, steps: 0, stageStartElapsed: 0, stageStartPenalty: 0,
+            stageTimes: [], total: 0, nearMiss: false, newIndex: -1 };
+let nextMoveAt = 0, repeatAt = 0, pendingDirs = [], lastInput = 0;
+let retireAsk = false; // リタイア確認を表示中か
+const demo = { stage: 0, step: 0, nextAt: 0, doneAt: 0 };
+// 管理メニュー
+const ADMIN_ITEMS = ['ステージ一覧', 'ランキングを消去', 'タイトルにもどる'];
+const admin = { sel: 0, lv: 0, no: 0, clearArmedAt: -99999, lastResult: {} }; // lastResult[id] = 練習の最新タイム
+function adminStage() { return LEVELS[admin.lv][admin.no]; }
+
+function setState(s, now) { state = s; stateT = now; }
+
+function goTitle(now) {
+  W.demo = true;
+  retireAsk = false;
+  parts = []; texts = []; shake = 0;
+  demo.stage = 0; startDemoStage(now);
+  setState('title', now);
+}
+function startDemoStage(now) {
+  const st = ALL_STAGES[demo.stage];
+  loadStage(st.lv, st);
+  demo.step = 0; demo.doneAt = 0; demo.nextAt = now + 700;
+}
+function updateDemo(now) {
+  const sol = W.st.solution;
+  if (demo.doneAt) {
+    if (now - demo.doneAt > 1600) { demo.stage = (demo.stage + 1) % ALL_STAGES.length; startDemoStage(now); }
+    return;
+  }
+  if (now >= demo.nextAt) {
+    doMove(sol[demo.step++], now);
+    demo.nextAt = now + CONFIG.DEMO_STEP_MS;
+    if (demo.step >= sol.length) { demo.doneAt = now; spawnConfetti(60); }
+  }
+}
+
+function leaveToMenu(now, s) {
+  W.demo = false; retireAsk = false; G.practice = false;
+  parts = []; texts = []; shake = 0;
+  suppressHeld(); pendingDirs = [];
+  setState(s, now);
+}
+function openAdmin(now) { admin.clearArmedAt = -99999; leaveToMenu(now, 'admin'); }
+function openAdminStages(now) { leaveToMenu(now, 'adminStages'); }
+function startPractice(st, now) {
+  W.demo = false; retireAsk = false;
+  STAGES = STAGES.slice(); STAGES[st.lv] = st;
+  parts = []; texts = [];
+  Object.assign(G, { elapsed: 0, penalty: 0, misses: 0, steps: 0, stageStartElapsed: 0, stageStartPenalty: 0,
+                     stageTimes: [], total: 0, newIndex: -1, practice: true });
+  SFX.start();
+  enterStage(st.lv, now);
+}
+function startAdminDemo(st, now) {
+  W.demo = true; parts = []; texts = [];
+  loadStage(st.lv, st);
+  G.steps = 0;
+  demo.step = 0; demo.doneAt = 0; demo.nextAt = now + 600;
+  setState('adminDemo', now);
+}
+function updateAdminDemo(now) {
+  const sol = W.st.solution;
+  if (demo.doneAt) { if (now - demo.doneAt > 1800) openAdminStages(now); return; }
+  if (now >= demo.nextAt) {
+    doMove(sol[demo.step++], now);
+    demo.nextAt = now + CONFIG.DEMO_STEP_MS;
+    if (demo.step >= sol.length) { demo.doneAt = now; spawnConfetti(80); }
+  }
+}
+
+function startGame(now) {
+  W.demo = false;
+  parts = []; texts = [];
+  Object.assign(G, { elapsed: 0, penalty: 0, misses: 0, steps: 0, stageStartElapsed: 0, stageStartPenalty: 0,
+                     stageTimes: [], total: 0, newIndex: -1, practice: false });
+  STAGES = pickCourse();
+  SFX.start();
+  enterStage(0, now);
+}
+function enterStage(i, now) {
+  loadStage(i);
+  G.steps = 0;
+  G.stageStartElapsed = G.elapsed; G.stageStartPenalty = G.penalty;
+  suppressHeld();
+  setState('ready', now);
+}
+function restartStage(now) {
+  resetBalls();
+  G.steps = 0;
+  parts = parts.filter(p => p.k === 'conf');
+  suppressHeld();
+  pendingDirs = [];
+  nextMoveAt = now;
+  setState('play', now);
+}
+function onFail(now, remain) {
+  if (W.demo) return;
+  G.misses++; G.penalty += CONFIG.PENALTY_SEC;
+  G.nearMiss = remain <= CONFIG.NEAR_MISS_CELLS;
+  shake = 18;
+  SFX.buzz();
+  if (G.nearMiss) SFX.near();
+  pendingDirs = [];
+  setState('fail', now);
+}
+function onClear(now) {
+  G.stageTimes.push((G.elapsed - G.stageStartElapsed) / 1000 + (G.penalty - G.stageStartPenalty));
+  spawnConfetti(W.idx === STAGES.length - 1 ? 260 : 160);
+  SFX.clear();
+  setState('clear', now);
+}
+function finishGame(now) {
+  G.total = Math.round((G.elapsed / 1000 + G.penalty) * 100) / 100;
+  G.newIndex = -1;
+  if (isRankIn(G.total)) {
+    const entry = { time: G.total, misses: G.misses, at: Date.now() };
+    const r = ranking.concat([entry]).sort((p, q) => p.time - q.time);
+    G.newIndex = r.indexOf(entry);
+    ranking = r.slice(0, CONFIG.RANKING_SIZE);
+    if (G.newIndex >= CONFIG.RANKING_SIZE) G.newIndex = -1;
+    saveRanking(ranking);
+  }
+  SFX.fanfare();
+  spawnConfetti(200);
+  suppressHeld();
+  setState('result', now);
+}
+// ランキングの表示名：クリアした日時（例 10/16 14:32）
+function clearedAt(r) {
+  if (typeof r.at !== 'number') return r.name || '---';
+  const d = new Date(r.at), z = n => String(n).padStart(2, '0');
+  return `${d.getMonth() + 1}/${d.getDate()} ${z(d.getHours())}:${z(d.getMinutes())}`;
+}
+
+// ============================================================
+//  入力（キーボード・ゲームパッド）
+// ============================================================
+const KEYDIR = { ArrowUp: 'U', ArrowDown: 'D', ArrowLeft: 'L', ArrowRight: 'R', KeyW: 'U', KeyS: 'D', KeyA: 'L', KeyD: 'R' };
+const PREVENT = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'Backspace', 'Tab']);
+const IGNORE_ANY = /^(F\d+|Shift|Control|Alt|Meta|OS|CapsLock|NumLock|ScrollLock|Lang|Convert|NonConvert|KanaMode|Backquote$)/;
+const active = new Map();     // 押されている入力源 → 方向
+const suppressed = new Set(); // 状態が変わったときに押されていたもの（離すまで無視）
+
+function suppressHeld() { for (const k of active.keys()) suppressed.add(k); }
+function heldDir() {
+  let d = null;
+  for (const [src, dir] of active) if (!suppressed.has(src)) d = dir;
+  return d;
+}
+
+window.addEventListener('keydown', e => {
+  if (PREVENT.has(e.code)) e.preventDefault();
+  ensureAudio();
+  lastInput = performance.now();
+  if (e.repeat) return;
+  // F：全画面表示 ⇔ 元に戻す（どの画面でも）
+  if (e.code === 'KeyF') { toggleFullscreen(); return; }
+  const dir = KEYDIR[e.code] || null;
+  const src = 'k' + e.code;
+  if (dir) { active.delete(src); active.set(src, dir); }
+  handlePress({ dir, src,
+    confirm: e.code === 'Enter' || e.code === 'NumpadEnter' || e.code === 'Space',
+    enter: e.code === 'Enter' || e.code === 'NumpadEnter', space: e.code === 'Space', code: e.code,
+    back: e.code === 'Backspace', del: e.code === 'Delete', esc: e.code === 'Escape',
+    ignoreAny: IGNORE_ANY.test(e.code) || e.code === '' });
+});
+// 全画面表示の切り替え
+function isFullscreen() { return !!(document.fullscreenElement || document.webkitFullscreenElement); }
+function toggleFullscreen() {
+  try {
+    if (isFullscreen()) { (document.exitFullscreen || document.webkitExitFullscreen).call(document); }
+    else { const el = document.documentElement; (el.requestFullscreen || el.webkitRequestFullscreen).call(el); }
+  } catch (e) { }
+}
+window.addEventListener('keyup', e => { const src = 'k' + e.code; active.delete(src); suppressed.delete(src); });
+window.addEventListener('blur', () => { active.clear(); suppressed.clear(); });
+
+const gpPrev = {};
+function pollGamepad() {
+  const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+  for (const gp of pads) {
+    if (!gp) continue;
+    const b = gp.buttons, ax = gp.axes, DZ = CONFIG.GAMEPAD_DEADZONE;
+    const pr = i => !!(b[i] && (b[i].pressed || b[i].value > 0.5));
+    const st = { U: pr(12), D: pr(13), L: pr(14), R: pr(15) };
+    if (ax.length >= 2) {
+      if (ax[0] < -DZ) st.L = true; if (ax[0] > DZ) st.R = true;
+      if (ax[1] < -DZ) st.U = true; if (ax[1] > DZ) st.D = true;
+    }
+    // 一部の安価なUSBパッド（非標準マッピング）は十字キーが axes[9] のハットスイッチ
+    if (gp.mapping !== 'standard' && ax.length >= 10 && ax[9] >= -1.05 && ax[9] <= 1.05) {
+      const h = Math.round((ax[9] + 1) * 3.5) % 8; // 0上 1右上 2右 3右下 4下 5左下 6左 7左上
+      if (h === 7 || h === 0 || h === 1) st.U = true;
+      if (h >= 1 && h <= 3) st.R = true;
+      if (h >= 3 && h <= 5) st.D = true;
+      if (h >= 5 && h <= 7) st.L = true;
+    }
+    for (let i = 0; i < Math.min(12, b.length); i++) st['B' + i] = pr(i);
+    for (const k in st) {
+      const id = gp.index + ':' + k, was = !!gpPrev[id], now = st[k];
+      if (now === was) continue;
+      gpPrev[id] = now;
+      const src = 'g' + id;
+      if (now) {
+        ensureAudio();
+        lastInput = performance.now();
+        const dir = DIRV[k] ? k : null;
+        if (dir) { active.delete(src); active.set(src, dir); }
+        handlePress({ dir, src, btn: k, confirm: ['B0', 'B2', 'B3', 'B9'].includes(k),
+          back: k === 'B1', del: false, esc: k === 'B8', ignoreAny: false, pad: true });
+      } else {
+        active.delete(src); suppressed.delete(src);
+      }
+    }
+  }
+}
+
+function handlePress(ev) {
+  const now = performance.now();
+  // リタイア：プレイ中に Esc で確認 → Enter でタイトルへ、もう一度 Esc で続ける
+  const playing = state === 'ready' || state === 'play' || state === 'fail' || state === 'clear';
+  if (retireAsk) {
+    if (!playing) { retireAsk = false; }
+    else {
+      if (ev.esc || ev.back) { retireAsk = false; suppressHeld(); SFX.select(); }
+      else if (ev.enter || (ev.pad && ev.confirm)) { if (G.practice) openAdminStages(now); else goTitle(now); }
+      return;
+    }
+  }
+  if (ev.esc && playing) { retireAsk = true; pendingDirs = []; suppressHeld(); SFX.select(); return; }
+  switch (state) {
+    case 'title':
+      if (ev.code === CONFIG.ADMIN_KEY) { openAdmin(now); return; }
+      if (ev.ignoreAny || ev.esc || ev.del) return;
+      startGame(now);
+      return;
+    case 'admin': {
+      const n = ADMIN_ITEMS.length;
+      if (ev.dir === 'U' || ev.dir === 'D') { admin.sel = (admin.sel + (ev.dir === 'D' ? 1 : n - 1)) % n; admin.clearArmedAt = -99999; SFX.select(); }
+      else if (ev.esc || ev.back) goTitle(now);
+      else if (ev.confirm) {
+        if (admin.sel === 0) { SFX.select(); openAdminStages(now); }
+        else if (admin.sel === 1) {
+          if (now - admin.clearArmedAt < 3000) { clearRanking(); admin.clearArmedAt = -99999; SFX.buzz(); addText('ランキングを消去しました', VW / 2, 600, '#ff6f8f', 32, 1800); }
+          else { admin.clearArmedAt = now; SFX.select(); }
+        } else goTitle(now);
+      }
+      return;
+    }
+    case 'adminStages': {
+      const nl = LEVELS.length;
+      if (ev.dir === 'L') { admin.lv = (admin.lv + nl - 1) % nl; admin.no = Math.min(admin.no, LEVELS[admin.lv].length - 1); SFX.select(); }
+      else if (ev.dir === 'R') { admin.lv = (admin.lv + 1) % nl; admin.no = Math.min(admin.no, LEVELS[admin.lv].length - 1); SFX.select(); }
+      else if (ev.dir === 'U' || ev.dir === 'D') { const n = LEVELS[admin.lv].length; admin.no = (admin.no + (ev.dir === 'D' ? 1 : n - 1)) % n; SFX.select(); }
+      else if (ev.esc || ev.back) { SFX.select(); openAdmin(now); }
+      else if (ev.space || ev.btn === 'B2' || ev.btn === 'B3') startAdminDemo(adminStage(), now);
+      else if (ev.enter || ev.btn === 'B0' || ev.btn === 'B9') startPractice(adminStage(), now);
+      return;
+    }
+    case 'adminDemo':
+      if (ev.esc || ev.back || ev.confirm) openAdminStages(now);
+      return;
+    case 'play':
+      if (ev.dir && pendingDirs.length < 3) pendingDirs.push(ev.dir); // 素早い連打も取りこぼさない
+      return;
+    case 'fail':
+      if (now - stateT >= CONFIG.FAIL_MIN_MS) restartStage(now);
+      return;
+    case 'result':
+      if (now - stateT < CONFIG.RESULT_INPUT_GUARD_MS) return;
+      goTitle(now);
+      return;
+  }
+}
+
+// ============================================================
+//  更新
+// ============================================================
+let lastFrame = performance.now();
+function update(now, rawDt) {
+  const dt = Math.min(50, rawDt);
+  if (state === 'play' || state === 'fail') G.elapsed += rawDt;
+
+  // 壁にぶつかった玉は少し食い込んでから砕ける
+  for (const b of W.balls) {
+    if (b.bump && !b.dead && now - b.t0 >= 70) { spawnShatter(b, now); b.dead = true; }
+  }
+  // 軌跡
+  for (const b of W.balls) {
+    if (b.dead) continue;
+    const p = ballPos(b, now);
+    b.trail.push(p); if (b.trail.length > 8) b.trail.shift();
+  }
+
+  switch (state) {
+    case 'title':
+      updateDemo(now);
+      break;
+    case 'adminDemo':
+      updateAdminDemo(now);
+      break;
+    case 'ready':
+      if (now - stateT >= CONFIG.READY_MS) { SFX.ready(); nextMoveAt = now; pendingDirs = []; setState('play', now); }
+      break;
+    case 'play': {
+      if (now >= nextMoveAt && !retireAsk) {
+        // 新しく押された向きはすぐ動く。押しっぱなしは少し待ってから一定間隔で進む
+        let dir = null, fresh = false;
+        if (pendingDirs.length) { dir = pendingDirs.shift(); fresh = true; }
+        else if (now >= repeatAt) dir = heldDir();
+        if (dir) {
+          nextMoveAt = now + CONFIG.MOVE_INTERVAL_MS;
+          repeatAt = now + (fresh ? Math.max(CONFIG.MOVE_INTERVAL_MS, CONFIG.FIRST_REPEAT_DELAY_MS) : CONFIG.MOVE_INTERVAL_MS);
+          const r = doMove(dir, now);
+          if (r === 'clear') onClear(now);
+        }
+      }
+      break;
+    }
+    case 'fail':
+      if (now - stateT >= CONFIG.FAIL_AUTO_RESTART_MS) restartStage(now);
+      break;
+    case 'clear':
+      if (now - stateT >= CONFIG.CLEAR_MS) {
+        if (G.practice) { admin.lastResult[W.st.id] = G.stageTimes[G.stageTimes.length - 1]; admin.lv = W.st.lv; admin.no = W.st.no; openAdminStages(now); }
+        else if (W.idx + 1 < STAGES.length) enterStage(W.idx + 1, now);
+        else finishGame(now);
+      }
+      break;
+  }
+
+  if (state !== 'title' && now - lastInput > CONFIG.IDLE_TIMEOUT_SEC * 1000) {
+    goTitle(now);
+  }
+  updateParts(dt);
+}
+
+// ============================================================
+//  描画
+// ============================================================
+function renderBg() {
+  const [c, x] = makeLayer();
+  const g = x.createLinearGradient(0, 0, 0, VH);
+  g.addColorStop(0, '#05030f'); g.addColorStop(0.5, '#0a0620'); g.addColorStop(1, '#04020a');
+  x.fillStyle = g; x.fillRect(0, 0, VW, VH);
+  x.strokeStyle = 'rgba(120,80,255,0.07)'; x.lineWidth = 1;
+  for (let i = 0; i <= VW; i += 40) { x.beginPath(); x.moveTo(i, 0); x.lineTo(i, VH); x.stroke(); }
+  for (let i = 0; i <= VH; i += 40) { x.beginPath(); x.moveTo(0, i); x.lineTo(VW, i); x.stroke(); }
+  const v = x.createRadialGradient(VW / 2, VH / 2, 200, VW / 2, VH / 2, 800);
+  v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(0,0,0,0.7)');
+  x.fillStyle = v; x.fillRect(0, 0, VW, VH);
+  return c;
+}
+function renderMaze() {
+  const [c, x] = makeLayer();
+  for (let m = 0; m < 2; m++) {
+    const ox = MAZE_X[m], oy = MAZE_Y, size = N * CS;
+    x.save();
+    x.fillStyle = 'rgba(6,8,22,0.92)';
+    x.shadowColor = WALL_COL[m]; x.shadowBlur = 30;
+    x.fillRect(ox, oy, size, size);
+    x.restore();
+    // 床のドット
+    x.fillStyle = `rgba(${WALL_RGB[m]},0.18)`;
+    for (let yy = 0; yy < N; yy++) for (let xx = 0; xx < N; xx++) {
+      if (W.grid[m][yy][xx] !== '#') { x.beginPath(); x.arc(ox + (xx + 0.5) * CS, oy + (yy + 0.5) * CS, 1.6, 0, TAU); x.fill(); }
+    }
+    // 壁
+    for (let yy = 0; yy < N; yy++) for (let xx = 0; xx < N; xx++) {
+      if (W.grid[m][yy][xx] !== '#') continue;
+      const px = ox + xx * CS, py = oy + yy * CS;
+      x.fillStyle = `rgba(${WALL_RGB[m]},0.16)`;
+      x.fillRect(px + 3, py + 3, CS - 6, CS - 6);
+      x.save();
+      x.strokeStyle = WALL_COL[m]; x.lineWidth = 2;
+      x.shadowColor = WALL_COL[m]; x.shadowBlur = 10;
+      x.strokeRect(px + 4, py + 4, CS - 8, CS - 8);
+      x.restore();
+    }
+    // スタート
+    const s = cellCenter(m, START[m].x, START[m].y);
+    x.strokeStyle = `rgba(${WALL_RGB[m]},0.5)`; x.setLineDash([4, 4]); x.lineWidth = 2;
+    x.beginPath(); x.arc(s.x, s.y, CS * 0.36, 0, TAU); x.stroke(); x.setLineDash([]);
+  }
+  return c;
+}
+
+function neonText(text, x, y, size, col, align = 'center', blur = 18, weight = 900) {
+  ctx.save();
+  ctx.font = `${weight} ${size}px ${FONT}`;
+  ctx.textAlign = align; ctx.textBaseline = 'middle';
+  ctx.shadowColor = col; ctx.shadowBlur = blur;
+  ctx.fillStyle = col; ctx.fillText(text, x, y);
+  ctx.shadowBlur = 0; ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  ctx.globalAlpha = 0.55; ctx.fillText(text, x, y);
+  ctx.restore();
+}
+function plainText(text, x, y, size, col, align = 'center', weight = 700) {
+  ctx.save();
+  ctx.font = `${weight} ${size}px ${FONT}`;
+  ctx.textAlign = align; ctx.textBaseline = 'middle';
+  ctx.fillStyle = col; ctx.fillText(text, x, y);
+  ctx.restore();
+}
+function fmt(sec) {
+  if (!isFinite(sec)) return '--:--.--';
+  const cs = Math.floor(sec * 100 + 1e-6);
+  const m = Math.floor(cs / 6000), s = Math.floor(cs / 100) % 60, c = cs % 100;
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(c).padStart(2, '0')}`;
+}
+function band(y, h, alpha = 0.6) {
+  const g = ctx.createLinearGradient(0, y - h / 2, 0, y + h / 2);
+  g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(0.2, `rgba(0,0,0,${alpha})`);
+  g.addColorStop(0.8, `rgba(0,0,0,${alpha})`); g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g; ctx.fillRect(0, y - h / 2, VW, h);
+}
+
+function drawWorld(now) {
+  ctx.drawImage(W.mazeCv, 0, 0, VW, VH);
+
+  // 中央の鏡の線
+  const mg = ctx.createLinearGradient(0, MAZE_Y, 0, MAZE_Y + N * CS);
+  mg.addColorStop(0, 'rgba(200,180,255,0)'); mg.addColorStop(0.5, 'rgba(220,200,255,0.8)'); mg.addColorStop(1, 'rgba(200,180,255,0)');
+  ctx.save(); ctx.strokeStyle = mg; ctx.lineWidth = 2; ctx.shadowColor = '#b9a0ff'; ctx.shadowBlur = 14;
+  ctx.beginPath(); ctx.moveTo(VW / 2, MAZE_Y - 10); ctx.lineTo(VW / 2, MAZE_Y + N * CS + 10); ctx.stroke(); ctx.restore();
+
+  // ゴール
+  for (let m = 0; m < 2; m++) {
+    const g = cellCenter(m, GOAL[m].x, GOAL[m].y);
+    const pulse = 0.5 + 0.5 * Math.sin(now / 220);
+    ctx.save();
+    ctx.strokeStyle = BALL_COL[m]; ctx.shadowColor = BALL_COL[m]; ctx.shadowBlur = 16 + pulse * 14;
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(g.x, g.y, CS * (0.3 + pulse * 0.08), 0, TAU); ctx.stroke();
+    ctx.lineWidth = 2; ctx.globalAlpha = 0.6;
+    ctx.beginPath(); ctx.arc(g.x, g.y, CS * 0.16, 0, TAU); ctx.stroke();
+    ctx.restore();
+    plainText('ゴール', g.x, g.y + CS * 0.62 - 4, 12, BALL_COL[m]);
+  }
+
+  // ぶつかった壁を赤く光らせる
+  for (const h of W.hitWalls) {
+    const px = MAZE_X[h.m] + h.x * CS, py = MAZE_Y + h.y * CS;
+    const a = 0.55 + 0.45 * Math.sin((now - stateT) / 60);
+    ctx.save();
+    ctx.fillStyle = `rgba(255,40,40,${0.35 + a * 0.4})`;
+    ctx.shadowColor = '#ff2020'; ctx.shadowBlur = 30;
+    ctx.fillRect(px + 2, py + 2, CS - 4, CS - 4);
+    ctx.strokeStyle = '#ffd0d0'; ctx.lineWidth = 3; ctx.strokeRect(px + 3, py + 3, CS - 6, CS - 6);
+    ctx.restore();
+  }
+
+  // 玉
+  for (const b of W.balls) {
+    if (b.dead) continue;
+    const col = BALL_COL[b.m];
+    ctx.save();
+    for (let i = 0; i < b.trail.length - 1; i++) {
+      const t = b.trail[i], c = cellCenter(b.m, t.x, t.y);
+      ctx.globalAlpha = (i + 1) / b.trail.length * 0.25;
+      ctx.fillStyle = col;
+      ctx.beginPath(); ctx.arc(c.x, c.y, CS * 0.28 * (i + 1) / b.trail.length, 0, TAU); ctx.fill();
+    }
+    ctx.restore();
+    const p = ballPos(b, now), c = cellCenter(b.m, p.x, p.y), r = CS * 0.31;
+    ctx.save();
+    ctx.shadowColor = col; ctx.shadowBlur = atGoal(b) ? 40 : 24;
+    const gr = ctx.createRadialGradient(c.x - r * 0.35, c.y - r * 0.4, r * 0.1, c.x, c.y, r);
+    gr.addColorStop(0, '#ffffff'); gr.addColorStop(0.3, col); gr.addColorStop(1, BALL_DARK[b.m]);
+    ctx.fillStyle = gr;
+    ctx.beginPath(); ctx.arc(c.x, c.y, r, 0, TAU); ctx.fill();
+    ctx.restore();
+  }
+
+  // 入力の向き（青・赤それぞれ）
+  const show = W.lastDir && now - W.lastDirAt < 260;
+  for (let m = 0; m < 2 && !W.demo; m++) {
+    const lx = MAZE_X[m], label = m === 0 ? '青：キーと同じ向き' : '赤：左右が逆向き';
+    plainText(label, lx, MAZE_Y - 16, 18, BALL_COL[m], 'left', 800);
+    if (show) {
+      const d = m === 0 ? W.lastDir : MIRROR[W.lastDir];
+      neonText(ARROW[d], lx + N * CS - 14, MAZE_Y - 18, 26, BALL_COL[m], 'right', 12);
+    }
+  }
+}
+
+function drawParts() {
+  for (const p of parts) {
+    const a = Math.max(0, Math.min(1, p.life / p.max * 1.5));
+    ctx.save(); ctx.globalAlpha = a;
+    if (p.k === 'shard') {
+      ctx.translate(p.x, p.y); ctx.rotate(p.r);
+      ctx.fillStyle = p.col; ctx.shadowColor = p.col; ctx.shadowBlur = 10;
+      ctx.beginPath(); ctx.moveTo(0, -p.s); ctx.lineTo(p.s * 0.8, p.s * 0.6); ctx.lineTo(-p.s * 0.7, p.s * 0.5); ctx.closePath(); ctx.fill();
+    } else if (p.k === 'spark') {
+      ctx.strokeStyle = p.col; ctx.lineWidth = 2; ctx.shadowColor = '#ffcc00'; ctx.shadowBlur = 8;
+      ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x - p.vx * 30, p.y - p.vy * 30); ctx.stroke();
+    } else if (p.k === 'ring') {
+      ctx.strokeStyle = p.col; ctx.lineWidth = 4; ctx.shadowColor = p.col; ctx.shadowBlur = 16;
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.s, 0, TAU); ctx.stroke();
+    } else if (p.k === 'conf') {
+      ctx.translate(p.x + Math.sin(p.wob) * 6, p.y); ctx.rotate(p.r);
+      ctx.scale(1, Math.abs(Math.cos(p.wob * 0.7)) + 0.15);
+      ctx.fillStyle = p.col; ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+    }
+    ctx.restore();
+  }
+  for (const t of texts) {
+    ctx.save(); ctx.globalAlpha = Math.min(1, t.life / t.max * 2.5);
+    const sc = 1 + Math.max(0, (t.life - t.max + 120) / 120) * 0.4;
+    ctx.translate(t.x, t.y); ctx.scale(sc, sc);
+    neonText(t.text, 0, 0, t.size, t.col, 'center', 20);
+    ctx.restore();
+  }
+}
+
+function drawHUD(now) {
+  const g = ctx.createLinearGradient(0, 0, 0, 92);
+  g.addColorStop(0, 'rgba(20,10,50,0.95)'); g.addColorStop(1, 'rgba(10,5,30,0.6)');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, VW, 86);
+  ctx.save(); ctx.strokeStyle = '#7a5cff'; ctx.shadowColor = '#7a5cff'; ctx.shadowBlur = 12; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(0, 86); ctx.lineTo(VW, 86); ctx.stroke(); ctx.restore();
+
+  const total = G.elapsed / 1000 + G.penalty;
+  plainText('ステージ', 40, 26, 18, '#b9a8ff', 'left');
+  neonText(`${W.idx + 1} / ${STAGES.length}`, 40, 58, 34, '#ffffff', 'left', 12);
+  plainText(`No.${W.st.id}`, 150, 62, 16, '#8f80c8', 'left');
+
+  plainText('手数 / 最短', 250, 26, 18, '#b9a8ff', 'left');
+  neonText(`${G.steps} / ${W.st.moves}`, 250, 58, 30, '#ffffff', 'left', 10);
+
+  plainText('タイム（ペナルティ込み）', VW / 2, 22, 18, '#b9a8ff');
+  neonText(fmt(total), VW / 2, 56, 44, '#ffe96b', 'center', 18);
+
+  plainText('ミス', 950, 26, 18, '#b9a8ff', 'left');
+  neonText(`${G.misses}回`, 950, 58, 30, G.misses ? '#ff6f8f' : '#ffffff', 'left', 10);
+  plainText(`+${G.penalty}秒`, 1040, 60, 18, '#ff8fa8', 'left');
+
+  if (G.practice) {
+    plainText('練習モード', 1360, 26, 18, '#b9a8ff', 'right');
+    neonText('記録されません', 1360, 58, 24, '#ff9fe0', 'right', 10);
+    return;
+  }
+  plainText('ベスト記録', 1360, 26, 18, '#b9a8ff', 'right');
+  neonText(ranking.length ? fmt(ranking[0].time) : '--:--.--', 1360, 58, 28, '#7dffc8', 'right', 10);
+}
+
+function drawRanking(cx, top, highlight, now) {
+  const w = 520, rowH = 44;
+  ctx.save();
+  ctx.fillStyle = 'rgba(10,6,30,0.82)';
+  ctx.strokeStyle = '#7a5cff'; ctx.lineWidth = 2; ctx.shadowColor = '#7a5cff'; ctx.shadowBlur = 16;
+  ctx.fillRect(cx - w / 2, top, w, 70 + rowH * CONFIG.RANKING_SIZE);
+  ctx.strokeRect(cx - w / 2, top, w, 70 + rowH * CONFIG.RANKING_SIZE);
+  ctx.restore();
+  neonText('ランキング', cx, top + 34, 28, '#d6c8ff', 'center', 14);
+  for (let i = 0; i < CONFIG.RANKING_SIZE; i++) {
+    const y = top + 82 + i * rowH, r = ranking[i];
+    const hl = i === highlight && Math.floor(now / 250) % 2 === 0;
+    const col = hl ? '#ffe96b' : (i === 0 ? '#ffd24f' : '#ffffff');
+    plainText(`${i + 1}位`, cx - 220, y, 26, col, 'left', 800);
+    plainText(r ? fmt(r.time) : '--:--.--', cx - 150, y, 28, col, 'left', 800);
+    plainText(r ? clearedAt(r) : '', cx + 40, y, 20, hl ? '#ffe96b' : '#d6c8ff', 'left', 700);
+    plainText(r ? `ミス${r.misses}` : '', cx + 235, y, 18, '#b9a8ff', 'right', 700);
+  }
+}
+
+function drawTitle(now) {
+  ctx.fillStyle = 'rgba(3,2,10,0.62)'; ctx.fillRect(0, 0, VW, VH);
+  ctx.save();
+  ctx.font = `900 76px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  const g = ctx.createLinearGradient(VW / 2 - 400, 0, VW / 2 + 400, 0);
+  g.addColorStop(0, BALL_COL[0]); g.addColorStop(0.5, '#e6d8ff'); g.addColorStop(1, BALL_COL[1]);
+  ctx.shadowColor = '#a78bff'; ctx.shadowBlur = 30 + 10 * Math.sin(now / 300);
+  ctx.fillStyle = g; ctx.fillText('ミラー2匹同時ゴール', VW / 2, 130);
+  ctx.restore();
+  plainText('青と赤の玉を、同時にゴールへ！　赤い玉は左右が逆に動くよ。壁にさわったらアウト！', VW / 2, 205, 24, '#e6e0ff');
+  plainText('操作：方向キー / WASD / ゲームパッドの十字キー　　全5面の合計タイムを競おう', VW / 2, 245, 20, '#b9a8ff');
+  if (Math.floor(now / 500) % 2 === 0) {
+    neonText('PRESS ANY KEY', VW / 2, 318, 52, '#ffe96b', 'center', 24);
+  }
+  plainText('なにかキーを押すとスタート', VW / 2, 362, 20, '#ffe96b');
+  drawRanking(VW / 2, 400, -1, now);
+  plainText(isFullscreen() ? 'F キー：全画面をやめる' : 'F キー：全画面にする', VW / 2, 770, 16, 'rgba(200,190,255,0.75)');
+  plainText('自動デモ中', VW / 2, 790, 14, 'rgba(200,190,255,0.6)');
+}
+
+function drawOverlay(now) {
+  const t = now - stateT;
+  if (state === 'ready') {
+    band(MAZE_Y + 300, 190, 0.7);
+    const sc = 1 + Math.max(0, 1 - t / 200) * 0.5;
+    ctx.save(); ctx.translate(VW / 2, MAZE_Y + 270); ctx.scale(sc, sc);
+    neonText(`ステージ ${W.idx + 1}`, 0, 0, 64, '#d6c8ff', 'center', 26);
+    ctx.restore();
+    plainText(`最短 ${W.st.moves} 手でクリアできるよ`, VW / 2, MAZE_Y + 340, 26, '#ffffff');
+  } else if (state === 'fail') {
+    band(MAZE_Y + 300, 240, 0.65);
+    const sc = 1 + Math.max(0, 1 - t / 150) * 0.8;
+    ctx.save(); ctx.translate(VW / 2, MAZE_Y + 265); ctx.scale(sc, sc);
+    neonText('ぶつかった！', 0, 0, 78, '#ff3b3b', 'center', 30);
+    ctx.restore();
+    if (G.nearMiss && t > 250) {
+      const s2 = 1 + Math.max(0, 1 - (t - 250) / 150) * 0.6;
+      ctx.save(); ctx.translate(VW / 2, MAZE_Y + 335); ctx.scale(s2, s2);
+      neonText('あと少し！', 0, 0, 44, '#ffe14d', 'center', 22);
+      ctx.restore();
+    }
+    plainText(`ペナルティ +${CONFIG.PENALTY_SEC}秒`, VW / 2 - 200, MAZE_Y + 385, 22, '#ff8fa8');
+    if (t >= CONFIG.FAIL_MIN_MS) plainText('なにかキーですぐリトライ', VW / 2 + 160, MAZE_Y + 385, 22, '#ffffff');
+  } else if (state === 'clear') {
+    band(MAZE_Y + 300, 200, 0.6);
+    const sc = 1 + Math.max(0, 1 - t / 200) * 0.6;
+    ctx.save(); ctx.translate(VW / 2, MAZE_Y + 275); ctx.scale(sc, sc);
+    const last = W.idx === STAGES.length - 1 && !G.practice;
+    neonText(last ? '全ステージクリア！' : 'ステージクリア！', 0, 0, 72, '#7dffc8', 'center', 28);
+    ctx.restore();
+    plainText(`このステージ ${fmt(G.stageTimes[G.stageTimes.length - 1] || 0)}`, VW / 2, MAZE_Y + 345, 26, '#ffffff');
+  }
+}
+
+function drawResult(now) {
+  ctx.fillStyle = 'rgba(3,2,12,0.86)'; ctx.fillRect(0, 0, VW, VH);
+  neonText('全5面クリア！', VW / 2, 80, 56, '#7dffc8', 'center', 26);
+  plainText('合計タイム', VW / 2, 145, 22, '#b9a8ff');
+  neonText(fmt(G.total), VW / 2, 200, 76, '#ffe96b', 'center', 28);
+  plainText(`実測 ${fmt(G.elapsed / 1000)}　＋　ペナルティ ${G.penalty}秒（ミス ${G.misses}回）`, VW / 2, 260, 22, '#ffffff');
+  const st = G.stageTimes.map((s, i) => `${i + 1}面 ${s.toFixed(2)}秒`).join('　');
+  plainText(st, VW / 2, 296, 18, '#b9a8ff');
+
+  if (G.newIndex >= 0) neonText(`ランキング ${G.newIndex + 1}位 に入ったよ！`, VW / 2, 360, 32, '#ff9fe0', 'center', 16);
+  else neonText('おしい！ ランキング入りならず… もう1回チャレンジ！', VW / 2, 360, 28, '#ff9fe0', 'center', 14);
+  drawRanking(VW / 2, 395, G.newIndex, now);
+  if (now - stateT > CONFIG.RESULT_INPUT_GUARD_MS && Math.floor(now / 500) % 2 === 0) {
+    plainText('なにかキーでタイトルへ', VW / 2, 765, 24, '#ffe96b');
+  }
+}
+
+function drawRetire(now) {
+  ctx.fillStyle = 'rgba(3,2,12,0.75)'; ctx.fillRect(0, 0, VW, VH);
+  ctx.save();
+  ctx.fillStyle = 'rgba(20,10,50,0.95)'; ctx.strokeStyle = '#ff6f8f'; ctx.lineWidth = 3;
+  ctx.shadowColor = '#ff6f8f'; ctx.shadowBlur = 24;
+  ctx.fillRect(VW / 2 - 330, 270, 660, 260); ctx.strokeRect(VW / 2 - 330, 270, 660, 260);
+  ctx.restore();
+  neonText('リタイアしますか？', VW / 2, 340, 52, '#ff6f8f', 'center', 22);
+  plainText('記録は残りません（タイムは止まりません）', VW / 2, 400, 22, '#e6e0ff');
+  if (Math.floor(now / 500) % 2 === 0) plainText(G.practice ? 'Enter：やめてステージ一覧へ' : 'Enter：リタイアしてタイトルへ', VW / 2, 455, 26, '#ffe96b', 'center', 800);
+  plainText('Esc：つづける', VW / 2, 495, 22, '#b9a8ff');
+}
+
+function drawMiniMaze(st, m, x, y, cs, showPath) {
+  const rows = m === 0 ? st.left : st.right;
+  ctx.fillStyle = 'rgba(6,8,22,0.95)'; ctx.fillRect(x, y, N * cs, N * cs);
+  ctx.fillStyle = `rgba(${WALL_RGB[m]},0.6)`;
+  for (let yy = 0; yy < N; yy++) for (let xx = 0; xx < N; xx++) {
+    if (rows[yy][xx] === '#') ctx.fillRect(x + xx * cs + 1, y + yy * cs + 1, cs - 2, cs - 2);
+  }
+  const at = (p) => [x + (p.x + 0.5) * cs, y + (p.y + 0.5) * cs];
+  if (showPath) {
+    ctx.save();
+    ctx.strokeStyle = BALL_COL[m]; ctx.globalAlpha = 0.75; ctx.lineWidth = Math.max(2, cs * 0.12); ctx.lineJoin = 'round';
+    ctx.beginPath();
+    let p = { ...START[m] }; ctx.moveTo(...at(p));
+    for (const c of st.solution) {
+      const [dx, dy] = DIRV[c];
+      p = { x: p.x + (m === 0 ? dx : -dx), y: p.y + dy };
+      ctx.lineTo(...at(p));
+    }
+    ctx.stroke(); ctx.restore();
+  }
+  ctx.save();
+  ctx.strokeStyle = BALL_COL[m]; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(...at(GOAL[m]), cs * 0.36, 0, TAU); ctx.stroke();
+  ctx.fillStyle = BALL_COL[m];
+  ctx.beginPath(); ctx.arc(...at(START[m]), cs * 0.3, 0, TAU); ctx.fill();
+  ctx.restore();
+}
+
+function drawAdmin(now) {
+  neonText('管理メニュー', VW / 2, 120, 56, '#d6c8ff', 'center', 24);
+  plainText('スタッフ用', VW / 2, 175, 20, '#b9a8ff');
+  for (let i = 0; i < ADMIN_ITEMS.length; i++) {
+    const y = 290 + i * 90, sel = i === admin.sel;
+    ctx.save();
+    ctx.fillStyle = sel ? 'rgba(60,30,120,0.9)' : 'rgba(20,10,50,0.8)';
+    ctx.strokeStyle = sel ? '#ffe96b' : '#7a5cff'; ctx.lineWidth = sel ? 3 : 2;
+    ctx.shadowColor = ctx.strokeStyle; ctx.shadowBlur = sel ? 20 : 8;
+    ctx.fillRect(VW / 2 - 260, y - 34, 520, 68); ctx.strokeRect(VW / 2 - 260, y - 34, 520, 68);
+    ctx.restore();
+    neonText((sel ? '▶ ' : '') + ADMIN_ITEMS[i], VW / 2, y, 32, sel ? '#ffe96b' : '#ffffff', 'center', sel ? 16 : 6);
+  }
+  plainText(`ランキング登録数：${ranking.length}件`, VW / 2, 600, 20, '#b9a8ff');
+  if (now - admin.clearArmedAt < 3000) {
+    band(660, 50, 0.8);
+    neonText('もう一度 Enter を押すとランキングを消去します', VW / 2, 660, 24, '#ff6f8f', 'center', 12);
+  }
+  plainText('↑↓：えらぶ　Enter：決定　Esc：タイトルへ', VW / 2, 750, 20, '#e6e0ff');
+}
+
+function drawAdminStages(now) {
+  neonText('ステージ一覧', VW / 2, 36, 34, '#d6c8ff', 'center', 18);
+  // 左側：レベルごとの一覧（列=レベル、行=パターン）
+  const cw = 130, ch = 82, gx = 8, gy = 6, mcs = 5, x0 = 40, y0 = 96;
+  LEVELS.forEach((list, lv) => {
+    const x = x0 + lv * (cw + gx);
+    plainText(`レベル${lv + 1}  ${list[0].moves}手`, x + cw / 2, y0 - 14, 14, lv === admin.lv ? '#ffe96b' : '#b9a8ff', 'center', 800);
+    list.forEach((st, no) => {
+      const y = y0 + no * (ch + gy), sel = lv === admin.lv && no === admin.no;
+      ctx.save();
+      ctx.fillStyle = sel ? 'rgba(60,30,120,0.9)' : 'rgba(20,10,50,0.8)';
+      ctx.strokeStyle = sel ? '#ffe96b' : '#5a46b0'; ctx.lineWidth = sel ? 3 : 1.5;
+      ctx.shadowColor = ctx.strokeStyle; ctx.shadowBlur = sel ? 16 : 0;
+      ctx.fillRect(x, y, cw, ch); ctx.strokeRect(x, y, cw, ch);
+      ctx.restore();
+      plainText(st.id, x + 6, y + 11, 12, sel ? '#ffe96b' : '#ffffff', 'left', 800);
+      const lr = admin.lastResult[st.id];
+      if (lr !== undefined) plainText(fmt(lr), x + cw - 6, y + 11, 11, '#7dffc8', 'right');
+      drawMiniMaze(st, 0, x + 6, y + 21, mcs, false);
+      drawMiniMaze(st, 1, x + cw - 6 - N * mcs, y + 21, mcs, false);
+    });
+  });
+  // 右側：選択中のステージを大きく（正解ルート付き）
+  const st = adminStage(), cs = 26, ix = 740, py = 124;
+  drawMiniMaze(st, 0, ix, py, cs, true);
+  drawMiniMaze(st, 1, ix + N * cs + 30, py, cs, true);
+  plainText('青', ix, py - 14, 16, BALL_COL[0], 'left', 800);
+  plainText('赤（左右逆）', ix + N * cs + 30, py - 14, 16, BALL_COL[1], 'left', 800);
+  neonText(`レベル${st.lv + 1}　No.${st.id}`, ix, py + N * cs + 40, 34, '#ffe96b', 'left', 16);
+  const ty = py + N * cs + 40;
+  const walls = [st.left, st.right].map(r => r.slice(1, -1).reduce((a, row) => a + row.slice(1, -1).split('#').length - 1, 0));
+  const lr = admin.lastResult[st.id];
+  const info = [
+    `最短手数：${st.moves}手　　内側の壁：青 ${walls[0]} / 赤 ${walls[1]}マス`,
+    `練習の最新タイム：${lr !== undefined ? fmt(lr) : '—'}　　（線は最短の正解ルート）`,
+  ];
+  info.forEach((t, k) => plainText(t, ix, ty + 48 + k * 30, 18, '#ffffff', 'left'));
+  const keys = ['←→：レベル　↑↓：ステージ', 'Enter：この面をプレイ（記録なし）', 'Space：正解デモを見る', 'Esc：管理メニューへ'];
+  keys.forEach((t, k) => plainText(t, ix, ty + 130 + k * 28, 18, k === 1 ? '#ffe96b' : '#e6e0ff', 'left', k === 1 ? 800 : 700));
+}
+
+function render(now) {
+  ctx.setTransform(K, 0, 0, K, 0, 0);
+  ctx.drawImage(bgCv, 0, 0, VW, VH);
+  if (state === 'admin' || state === 'adminStages') {
+    if (state === 'admin') drawAdmin(now); else drawAdminStages(now);
+    drawParts();
+    return;
+  }
+  ctx.save();
+  if (shake > 0) ctx.translate(rnd(-shake, shake), rnd(-shake, shake));
+  drawWorld(now);
+  drawParts();
+  ctx.restore();
+  if (state === 'title') { drawTitle(now); drawParts(); return; }
+  if (state === 'adminDemo') {
+    band(40, 70, 0.85);
+    neonText(`正解デモ　ステージ ${W.idx + 1}　${G.steps} / ${W.st.moves}手`, VW / 2, 34, 30, '#ffe96b', 'center', 14);
+    plainText('Esc：ステージ一覧へもどる', VW - 24, 774, 16, 'rgba(200,190,255,0.8)', 'right');
+    return;
+  }
+  drawHUD(now);
+  if (state === 'result') { drawResult(now); drawParts(); return; }
+  drawOverlay(now);
+  if (retireAsk) drawRetire(now);
+  else plainText('Esc：リタイア', VW - 24, 774, 16, 'rgba(200,190,255,0.6)', 'right');
+}
+
+// ============================================================
+//  起動時の自己チェック：全ステージを同時BFSで解けるか検証
+// ============================================================
+function verifyStages() {
+  const res = [];
+  for (let i = 0; i < ALL_STAGES.length; i++) {
+    const st = ALL_STAGES[i];
+    const [A, B] = parseStage(st);
+    const wall = (g, x, y) => g[y][x] === '#';
+    const key = (bx, by, rx, ry) => ((by * N + bx) * N + ry) * N + rx;
+    const seen = new Uint8Array(N ** 4);
+    let q = [[START[0].x, START[0].y, START[1].x, START[1].y]], d = 0, found = -1;
+    seen[key(...q[0])] = 1;
+    while (q.length && found < 0) {
+      const nq = [];
+      for (const [bx, by, rx, ry] of q) {
+        if (bx === GOAL[0].x && by === GOAL[0].y && rx === GOAL[1].x && ry === GOAL[1].y) { found = d; break; }
+        for (const [dx, dy] of Object.values(DIRV)) {
+          const s = [bx + dx, by + dy, rx - dx, ry + dy];
+          if (wall(A, s[0], s[1]) || wall(B, s[2], s[3])) continue;
+          const k = key(...s); if (seen[k]) continue; seen[k] = 1; nq.push(s);
+        }
+      }
+      if (found < 0) { q = nq; d++; }
+    }
+    // 埋め込んだ解でも実際にゴールできるか
+    let b = { ...START[0] }, r = { ...START[1] }, ok = true;
+    for (const c of st.solution) {
+      const [dx, dy] = DIRV[c]; b.x += dx; b.y += dy; r.x -= dx; r.y += dy;
+      if (wall(A, b.x, b.y) || wall(B, r.x, r.y)) { ok = false; break; }
+    }
+    ok = ok && b.x === GOAL[0].x && b.y === GOAL[0].y && r.x === GOAL[1].x && r.y === GOAL[1].y;
+    res.push({ stage: st.id, shortest: found, expected: st.moves, solutionOk: ok });
+  }
+  return res;
+}
+const stageCheck = verifyStages();
+if (stageCheck.some(s => s.shortest !== s.expected || !s.solutionOk)) console.error('ステージデータに問題があります', stageCheck);
+
+// テスト用の窓口
+window.__game = { CONFIG, LEVELS, get STAGES() { return STAGES; }, pickCourse, G, W, stageCheck, get state() { return state; }, get retireAsk() { return retireAsk; }, admin, get ranking() { return ranking; }, loadRanking };
+
+// ============================================================
+//  開始
+// ============================================================
+function frame(now) {
+  const raw = Math.max(0, now - lastFrame); lastFrame = now;
+  pollGamepad();
+  update(now, raw);
+  render(now);
+  requestAnimationFrame(frame);
+}
+window.addEventListener('resize', resize);
+document.addEventListener('fullscreenchange', resize);
+document.addEventListener('webkitfullscreenchange', resize);
+lastInput = performance.now();
+goTitle(performance.now());
+resize();
+requestAnimationFrame(frame);
+// 全画面中は Esc キーをゲーム用に使う（Esc で全画面が解除されないようにする。戻すときは F キー）
+// ※ Chrome / Edge の機能。Esc を長押しすると、ブラウザの機能で全画面が解除される
+document.addEventListener('fullscreenchange', () => {
+  const kb = navigator.keyboard;
+  if (!kb || !kb.lock) return;
+  if (document.fullscreenElement) kb.lock(['Escape']).catch(() => {});
+  else kb.unlock();
+});
+</script>
+</body>
+</html>

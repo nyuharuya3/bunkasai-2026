@@ -1,0 +1,3033 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>みかん丸 ピンボール航海記</title>
+  <style>
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: #000;
+  color: #fdf6e3;
+  font-family: "Hiragino Maru Gothic ProN", "Meiryo", "Yu Gothic", sans-serif;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#app {
+  display: flex;
+  justify-content: flex-start;
+  align-items: flex-start;
+  gap: 18px;
+  height: 100%;
+  padding: 12px;
+}
+
+#tableWrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 100%;
+}
+
+#table {
+  height: 100%;
+  max-height: 1000px;
+  aspect-ratio: 500 / 820;
+  border-radius: 18px;
+  box-shadow: 0 0 0 6px #e8892b, 0 0 0 10px #7a3e0d, 0 10px 40px rgba(0,0,0,.6);
+  background: #1d4e75;
+  touch-action: none;
+}
+
+#touch {
+  display: none;
+  gap: 10px;
+  margin-top: 10px;
+  width: 100%;
+}
+
+.tbtn {
+  flex: 1;
+  font-size: 22px;
+  padding: 14px 0;
+  border: none;
+  border-radius: 12px;
+  background: #e8892b;
+  color: #fff;
+  font-weight: bold;
+  touch-action: none;
+}
+.tbtn.launch { background: #3a8f4f; }
+.tbtn:active { filter: brightness(1.2); }
+
+/* ---------- 右側 ---------- */
+#right {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+h1 {
+  font-size: 19px;
+  margin: 0 0 0 auto;
+  color: #ffb347;
+}
+
+/* ---------- 町の景色（上 2/3） ---------- */
+#sceneWrap {
+  flex: 1 1 0;   /* 下の情報を先に確保して、残りを景色に使う */
+  min-height: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+#sceneHead {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
+#townStatus {
+  font-size: 15px;
+  font-weight: bold;
+  color: #12233a;
+  background: #ffb347;
+  border-radius: 20px;
+  padding: 2px 12px;
+}
+#townName {
+  font-size: 34px;
+  font-weight: bold;
+  color: #fff;
+  text-shadow: 0 3px 0 #7a3e0d;
+}
+#where { font-size: 15px; font-weight: bold; color: #bfe3ff; }
+#sceneBox {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  border-radius: 14px;
+  border: 4px solid #e8892b;
+  box-shadow: 0 8px 30px rgba(0,0,0,.5);
+  overflow: hidden;
+}
+#scene {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* ---------- 横に流れる地名 ---------- */
+#routeStrip {
+  flex: 0 0 auto;
+  height: 100px;
+  position: relative;
+  overflow: hidden;
+  background: #fff;
+  border-radius: 12px;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+#routeStrip.dragging { cursor: grabbing; }
+#routeTrack {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  transition: transform .25s ease-out;
+}
+#routeStrip.dragging #routeTrack { transition: none; }
+.stripArrow {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  width: 34px;
+  height: 60px;
+  border: none;
+  border-radius: 10px;
+  background: rgba(232, 137, 43, .85);
+  color: #fff;
+  font-size: 18px;
+  cursor: pointer;
+}
+.stripArrow.left { left: 6px; }
+.stripArrow.right { right: 6px; }
+.stripArrow:hover { background: #e8892b; }
+#stripHint {
+  position: absolute;
+  right: 48px;
+  top: 4px;
+  font-size: 11px;
+  color: #7f97b3;
+  pointer-events: none;
+}
+#routeLine {
+  position: absolute;
+  top: 40px;
+  left: 0;
+  height: 4px;
+  background: #3b5d82;
+  border-radius: 2px;
+}
+.stop {
+  position: absolute;
+  top: 30px;
+  width: 150px;
+  transform: translateX(-50%);
+  text-align: center;
+  color: #9aa8b8;
+}
+.stop .dot {
+  width: 18px;
+  height: 18px;
+  margin: 0 auto 4px;
+  border-radius: 50%;
+  background: #c5d0dc;
+  border: 3px solid #fff;
+}
+.stop.port .dot { border-radius: 4px; background: #5f86b0; }
+.stop .name { display: block; font-weight: bold; font-size: 15px; }
+.stop .sub { display: block; font-size: 11px; opacity: .8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stop.passed { color: #1a2533; }
+.stop.passed .dot { background: #ffb347; }
+.stop.next { color: #1a2533; }
+.stop.next .name { color: #d26a00; font-size: 17px; }
+#shipMarker {
+  position: absolute;
+  left: 0;
+  top: 2px;
+  font-size: 26px;
+  transform: translateX(-50%);
+  filter: drop-shadow(0 2px 2px rgba(0,0,0,.6));
+  z-index: 1;
+}
+
+/* ---------- 下の情報 ---------- */
+#bottom {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;  /* 横幅が足りないときは操作説明を下の行に回す */
+  gap: 10px;
+}
+.btnRow { margin-top: auto; display: flex; gap: 8px; }
+#statusBox {
+  flex: 1 1 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.stats { display: flex; gap: 8px; }
+.stat {
+  flex: 1;
+  background: #fff;
+  border-radius: 10px;
+  padding: 6px 10px;
+  display: flex;
+  flex-direction: column;
+}
+.stat .label { font-size: 11px; color: #5a6b80; }
+.stat .value { font-size: 24px; font-weight: bold; color: #e8792b; }
+.stat .value .max { font-size: 14px; color: #9aa8b8; margin-left: 2px; }
+
+.nextBox {
+  background: #fff;
+  border-radius: 10px;
+  padding: 6px 10px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+#next { font-size: 13px; font-weight: bold; color: #1a2533; }
+#nextBar {
+  height: 10px;
+  background: #e3eaf2;
+  border-radius: 5px;
+  overflow: hidden;
+}
+#nextFill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #ffb347, #ff7b00);
+  transition: width .2s;
+}
+
+#townInfo {
+  flex: 2 1 260px;
+  min-width: 0;
+  background: #fff;
+  color: #1a2533;
+  border-radius: 12px;
+  padding: 10px 16px;
+  overflow: auto;
+}
+#townSub { font-size: 13px; color: #6a7b90; }
+#townDesc { margin: 4px 0; font-size: 17px; line-height: 1.6; }
+#townGift { font-size: 15px; font-weight: bold; color: #d26a00; }
+
+.help {
+  flex: 1 1 200px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #33465c;
+  background: #fff;
+  border-radius: 10px;
+  padding: 8px 10px;
+  overflow: auto;
+}
+
+/* ---------- トースト ---------- */
+#toast {
+  position: fixed;
+  top: 18%;
+  left: 50%;
+  transform: translate(-50%, -20px);
+  background: rgba(255, 248, 230, .97);
+  color: #5a2d00;
+  border: 4px solid #e8892b;
+  border-radius: 16px;
+  padding: 14px 26px;
+  font-size: 20px;
+  font-weight: bold;
+  text-align: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .3s, transform .3s;
+  z-index: 10;
+  max-width: 90vw;
+}
+#toast.show { opacity: 1; transform: translate(-50%, 0); }
+#toast small { display: block; font-size: 14px; color: #8a5a20; margin-top: 4px; }
+
+/* ---------- オーバーレイ ---------- */
+#overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 18, 32, .78);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 20;
+}
+#overlay.hidden { display: none; }
+.card {
+  background: #fff8e8;
+  color: #4a2a08;
+  border-radius: 20px;
+  border: 6px solid #e8892b;
+  padding: 24px 30px;
+  max-width: 520px;
+  width: 92vw;
+  text-align: center;
+}
+.card h2 { margin: 0 0 10px; color: #d26a00; }
+.card ul { text-align: left; font-size: 14px; line-height: 1.7; padding-left: 20px; }
+.card p { line-height: 1.7; }
+#startBtn {
+  font-size: 22px;
+  font-weight: bold;
+  padding: 12px 40px;
+  border: none;
+  border-radius: 40px;
+  background: linear-gradient(#ffb347, #e8792b);
+  color: #fff;
+  cursor: pointer;
+  box-shadow: 0 4px 0 #9a4a0a;
+}
+#startBtn:active { transform: translateY(3px); box-shadow: 0 1px 0 #9a4a0a; }
+
+#retireBtn, #fsBtn {
+  font-size: 13px;
+  font-weight: bold;
+  padding: 6px 14px;
+  border: 2px solid #fff;
+  border-radius: 20px;
+  background: #fff;
+  color: #1f3a5c;
+  cursor: pointer;
+}
+#retireBtn:hover, #fsBtn:hover { background: #ffe9cc; border-color: #ffe9cc; }
+
+/* ---------- テストモードのパネル ---------- */
+#testPanel {
+  position: fixed;
+  right: 14px;
+  bottom: 14px;
+  z-index: 30;
+  width: 290px;
+  background: rgba(255, 248, 232, .96);
+  color: #4a2a08;
+  border: 3px solid #3b5d82;
+  border-radius: 12px;
+  font-size: 14px;
+  box-shadow: 0 6px 20px rgba(0,0,0,.5);
+}
+#testPanel.hidden { display: none; }
+#testPanel.folded #tpBody { display: none; }
+.tpHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 10px;
+  font-weight: bold;
+  background: #3b5d82;
+  color: #fff;
+  border-radius: 8px 8px 0 0;
+}
+#testPanel.folded .tpHead { border-radius: 8px; }
+#tpBody { padding: 8px 10px; display: flex; flex-direction: column; gap: 8px; }
+.tpRow { display: flex; align-items: center; gap: 6px; }
+.tpRow > span { width: 44px; font-weight: bold; }
+#testPanel button {
+  font-size: 13px;
+  font-weight: bold;
+  padding: 3px 9px;
+  border: none;
+  border-radius: 6px;
+  background: #e8892b;
+  color: #fff;
+  cursor: pointer;
+}
+#testPanel .tpHead button { background: rgba(255,255,255,.2); }
+#tpWarp { flex: 1; font-size: 13px; padding: 2px; }
+
+/* ---------- 狭い画面・スマホ：縦に並べる ---------- */
+@media (max-width: 1000px) {
+  html, body { overflow: auto; }
+  #app { flex-direction: column; align-items: center; height: auto; }
+  #tableWrap { height: auto; width: 100%; max-width: 500px; }
+  #table { height: auto; width: 100%; }
+  #right { width: 100%; height: auto; }
+  #sceneWrap { flex: none; }
+  #sceneBox { flex: none; aspect-ratio: 16 / 9; }
+  #bottom { flex-wrap: wrap; }
+  #statusBox, #townInfo, .help { flex-basis: 100%; }
+}
+@media (pointer: coarse) {
+  #touch { display: flex; }
+}
+</style>
+</head>
+<body>
+  <div id="app">
+    <div id="tableWrap">
+      <canvas id="table"></canvas>
+      <div id="touch">
+        <button id="btnLeft" class="tbtn">◀</button>
+        <button id="btnLaunch" class="tbtn launch">発射</button>
+        <button id="btnRight" class="tbtn">▶</button>
+      </div>
+    </div>
+
+    <div id="right">
+      <section id="sceneWrap">
+        <div id="sceneHead">
+          <span id="townStatus">出発地</span>
+          <span id="townName">飯田橋</span>
+          <span id="where">神田川を航行中</span>
+          <h1>🍊 みかん丸 ピンボール航海記</h1>
+        </div>
+        <div id="sceneBox"><canvas id="scene"></canvas></div>
+      </section>
+
+      <section id="routeStrip">
+        <div id="routeTrack"><div id="routeLine"></div><div id="shipMarker">🚢</div></div>
+        <button class="stripArrow left" id="stripLeft" title="前の町を見る">◀</button>
+        <button class="stripArrow right" id="stripRight" title="先の町を見る">▶</button>
+        <span id="stripHint">ドラッグで先の町まで見られます</span>
+      </section>
+
+      <section id="bottom">
+        <div id="statusBox">
+          <div class="stats">
+            <div class="stat"><span class="label">🍊 集めたミカン</span><span class="value"><span id="mikan">0</span>個</span></div>
+            <div class="stat"><span class="label">⚪ 残りの球</span><span class="value"><span id="balls">4</span><small class="max">/4</small></span></div>
+          </div>
+          <div class="nextBox">
+            <div id="next">次の寄港地：函館 まであと 60🍊</div>
+            <div id="nextBar"><div id="nextFill"></div></div>
+          </div>
+          <div class="btnRow">
+            <button id="retireBtn">🏳 リタイア（Esc）</button>
+            <button id="fsBtn">⛶ 全画面（F）</button>
+          </div>
+        </div>
+        <div id="townInfo">
+          <div id="townSub"></div>
+          <p id="townDesc"></p>
+          <div id="townGift"></div>
+        </div>
+        <div class="help">
+          <b>操作</b><br>
+          左フリッパー：← / Z<br>
+          右フリッパー：→ / M<br>
+          発射：スペース（長押しで強く）<br>
+          球が光る輪を通るとミカンがもらえる！<br>
+          ⚠ 空振りの連打でフリッパーがこわれる！
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+
+  <div id="overlay">
+    <div class="card">
+      <h2 id="ovTitle">🍊 みかん丸 ピンボール航海記</h2>
+      <div id="ovBody">
+        <p>ミカンを燃料に、みかん丸は<b>飯田橋の東京理科大学</b>から出航！<br>
+          …のはずが、突風で北海道の<b>長万部</b>まで飛ばされてしまった！<br>
+          港に寄りながら<b>飯田橋の東京理科大学</b>まで帰ろう！</p>
+        <ul>
+          <li>銀色の<b>球</b>をフリッパーで打って、光る輪の上を通すと<b>ミカン🍊</b>がもらえる（輪の数字の数だけ）</li>
+          <li>球が全部なくなったら航海終了</li>
+        </ul>
+      </div>
+      <button id="startBtn">出航する！</button>
+    </div>
+  </div>
+
+  <div id="testPanel" class="hidden">
+    <div class="tpHead">🔧 管理者メニュー（F2で閉じる） <button id="tpFold" title="たたむ">－</button></div>
+    <div id="tpBody">
+      <div class="tpRow"><button id="tpRestart">テストモードで最初から</button></div>
+      <div class="tpRow"><span>ミカン</span>
+        <button data-add="10">+10</button><button data-add="50">+50</button><button data-add="100">+100</button>
+      </div>
+      <div class="tpRow"><span>ワープ</span><select id="tpWarp"></select><button id="tpWarpGo">移動</button></div>
+      <label class="tpRow"><input type="checkbox" id="tpInfinite"> 球が減らない</label>
+      <label class="tpRow"><input type="checkbox" id="tpAuto"> オートプレイ（自動で打つ）</label>
+    </div>
+  </div>
+
+  <script>
+'use strict';
+
+// =====================================================
+//  みかん丸 ピンボール航海記
+// =====================================================
+
+// ---------- 航路（d = 到着に必要なミカンの累計） ----------
+// 飯田橋の理科大から出航したとたん突風で長万部まで飛ばされ、そこから理科大へ帰ってくる
+const ROUTE = [
+  { name: '長万部',   sub: 'ここからスタート', d: 0,  area: 'north',
+    desc: '突風で北海道まで飛ばされた！ 内浦湾に面した、駅弁「かにめし」の町。' },
+  { name: '函館',     sub: '北海道',           d: 33,  area: 'north', port: true, gift: '函館のイカ',
+    desc: '函館山と赤レンガ倉庫、五稜郭タワーの町。ここから本州へ渡る。' },
+  { name: '八戸',     sub: '青森・本州上陸！', d: 68, area: 'sea',   port: true, gift: '八戸のせんべい汁',
+    desc: '蕪島はウミネコがたくさん集まる島。朝市も有名。' },
+  { name: '釜石',     sub: '岩手・鉄の町',     d: 96, area: 'sea',
+    desc: '日本の近代製鉄が始まった鉄の町。丘の上に釜石大観音が立つ。' },
+  { name: '大船渡',   sub: '岩手・三陸海岸',   d: 115, area: 'sea',
+    desc: '碁石海岸のふしぎな形の岩が見どころ。サンマの水揚げも多い。' },
+  { name: '気仙沼',   sub: '宮城',             d: 133, area: 'sea',   port: true, gift: '気仙沼のフカヒレ',
+    desc: 'フカヒレとカツオの港。大漁旗をかかげた漁船が並ぶ。' },
+  { name: '石巻',     sub: '宮城',             d: 155, area: 'sea',
+    desc: '漁業の町。川の中州に宇宙船のような石ノ森萬画館がある。' },
+  { name: '大洗',     sub: '茨城・フェリーの港', d: 186, area: 'sea', port: true, gift: '大洗のあんこう鍋',
+    desc: '海の岩の上に立つ「神磯の鳥居」と、北海道行きフェリーの港。' },
+  { name: '銚子',     sub: '千葉・関東に帰ってきた', d: 211, area: 'sea', port: true, gift: '銚子のしょうゆ',
+    desc: '日本有数の漁港。犬吠埼灯台は関東のいちばん東のはし。' },
+  { name: '館山',     sub: '房総半島の先',     d: 239, area: 'sea',
+    desc: '房総半島の南の港町。丘の上に館山城が建っている。' },
+  { name: '竹芝',     sub: '東京湾',           d: 261, area: 'bay',   port: true, gift: '東京湾のアナゴ',
+    desc: '東京に帰ってきた！ 東京タワーとレインボーブリッジが見える。' },
+  { name: '浅草橋',   sub: '隅田川から神田川へ', d: 276, area: 'river',
+    desc: '人形の町。神田川の入口・柳橋には屋形船が並び、スカイツリーも見える。' },
+  { name: '秋葉原',   sub: '万世橋',           d: 284, area: 'river',
+    desc: '電気とアニメの町。レンガ造りの万世橋高架橋の上を中央線が走る。' },
+  { name: '御茶ノ水', sub: '聖橋をくぐる',     d: 293, area: 'river',
+    desc: '深い谷を流れる神田川。聖橋の下を丸ノ内線の赤い電車が横切る。' },
+  { name: '飯田橋',   sub: '東京理科大学 ゴール', d: 301, area: 'river', goal: true, gift: '理科大のみんなの拍手',
+    desc: 'ゴール！ 外堀と神田川が出会う町。東京理科大学のキャンパスに到着！' },
+];
+const GOAL = ROUTE[ROUTE.length - 1].d;
+const AREA_TEXT = {
+  river: '神田川を航行中',
+  bay: '東京湾を航行中',
+  sea: '太平洋を南下中',
+  north: '北海道の海を航行中',
+};
+const INTRO_TIME = 3;  // 理科大から長万部へ飛ばされる演出の秒数
+
+// ---------- 台の定数 ----------
+const W = 500, H = 820;
+const BR = 9;          // ボール半径
+const G = 1050;        // 重力 (px/s^2)
+const MAXV = 1900;     // 最高速度
+const STEP = 1 / 480;  // 物理ステップ（フリッパーが薄いので細かめ）
+const LANE_X = 448;    // 発射レーンの内壁
+const START_BALLS = 3;  // 最初の球の数
+const MAX_BALLS = 4;    // 球はこれより多くならない
+const PORT_BONUS_IF = 2; // 寄港したとき、残りの球がこの数以下なら1個ふえる
+// 連打対策：球が近くにないのにフリッパーを押す「空振り」を短い時間に何回もすると、
+// しばらくこわれて動かなくなる（ちゃんと球をねらって打った分は数えない）
+const MASH_LIMIT = 5;    // この回数の空振りを
+const MASH_WINDOW = 2;   // この秒数の中ですると
+const BREAK_TIME = 3;    // この秒数こわれる
+let clock = 0;           // ゲームの時計（秒）
+
+const canvas = document.getElementById('table');
+const ctx = canvas.getContext('2d');
+const scene = document.getElementById('scene');
+const sctx = scene.getContext('2d');
+
+// ---------- 壁 ----------
+const walls = [];
+function seg(x1, y1, x2, y2, opt = {}) {
+  const w = { x1, y1, x2, y2, e: 0.45, ...opt };
+  walls.push(w);
+  return w;
+}
+
+seg(20, 815, 20, 240);                       // 左外壁
+const ARC = { x: 250, y: 240, r: 230 };      // 上部のアーチ
+{
+  const N = 28;
+  let px = ARC.x - ARC.r, py = ARC.y;
+  for (let i = 1; i <= N; i++) {
+    const a = Math.PI + Math.PI * i / N;
+    const nx = ARC.x + Math.cos(a) * ARC.r, ny = ARC.y + Math.sin(a) * ARC.r;
+    seg(px, py, nx, ny, { e: 0.3 });
+    px = nx; py = ny;
+  }
+}
+seg(480, 240, 480, 815);                     // 右外壁
+seg(LANE_X, 815, LANE_X, 300);               // 発射レーン内壁
+seg(LANE_X, 790, 480, 790, { e: 0.1 });      // 発射レーン床
+seg(LANE_X, 300, 480, 268, { oneWay: true, e: 0.3 }); // レーン出口の一方通行ゲート
+// ガイドはフリッパーと同じ傾き・同じ厚みにして、段差なく一続きの坂にする
+const FLIP_TH = 3;                                // ガイドの厚み（半分）。フリッパーの上の面もここにそろえる
+const FLIP_R0 = 9;                                // フリッパーの付け根の太さ（半分）
+const FLIP_R1 = 4.5;                              // フリッパーの先の太さ（半分）
+const GUIDE_ANG = Math.atan2(120, 155);           // ガイドとフリッパーの傾き
+const leftGuide = seg(20, 590, 175, 710, { th: FLIP_TH });                        // 左ガイド
+seg(LANE_X, 710 - (LANE_X - 325) * Math.tan(GUIDE_ANG), 325, 710, { th: FLIP_TH }); // 右ガイド
+
+// 上部ロールオーバーレーンの仕切り
+[160, 220, 280, 340].forEach(x => seg(x, 70, x, 105, { e: 0.5 }));
+
+// スリングショット（三角形の斜辺がはじく）
+const slings = [
+  { a: [65, 520], b: [65, 590], c: [120, 628] },
+  { a: [403, 520], b: [403, 590], c: [348, 628] },
+];
+slings.forEach(s => {
+  s.flash = 0;
+  seg(...s.a, ...s.b);
+  seg(...s.b, ...s.c);
+  s.wall = seg(...s.a, ...s.c, { kick: 380, e: 0.6, sling: s });
+});
+
+// ---------- バンパー（ミカンの木） ----------
+const bumpers = [
+  { x: 190, y: 200, r: 24, flash: 0 },
+  { x: 310, y: 200, r: 24, flash: 0 },
+  { x: 250, y: 280, r: 24, flash: 0 },
+];
+
+// ---------- ミカンポイント（通るとミカンがもらえる） ----------
+// いちばん上の3本のレーンの輪は「8・20・球+1」をランダムに並べる。
+// 球が上限まであるときは「8・8・20」
+const BALL_LANE_COOL = 30;  // 球+1を取ったあと、次の球+1が出るまでの秒数
+let ballLaneCool = 0;
+const holes = [
+  { x: 190, y: 88,  r: 13, val: 8, lane: true },
+  { x: 250, y: 88,  r: 13, val: 20, lane: true },
+  { x: 310, y: 88,  r: 13, val: 8, lane: true },
+  { x: 62,  y: 300, r: 13, val: 8 },
+  { x: 410, y: 330, r: 13, val: 8 },
+  { x: 140, y: 450, r: 13, val: 5 },
+  { x: 360, y: 450, r: 13, val: 5 },
+  { x: 250, y: 430, r: 13, val: 3 },
+];
+holes.forEach(h => { h.cool = 0; h.flash = 0; });
+
+
+// ---------- フリッパー ----------
+function makeFlipper(px, py, rest, up, side) {
+  return { px, py, len: 67, rest, up, side, ang: rest, omega: 0, pressed: false, presses: [], brokenT: 0, clampT: 0 };
+}
+const flippers = {
+  left: makeFlipper(175, 710, GUIDE_ANG, -0.45, 1),
+  right: makeFlipper(325, 710, Math.PI - GUIDE_ANG, Math.PI + 0.45, -1),
+};
+
+// ---------- 状態 ----------
+let state = 'title';      // title / play / over / clear
+let ball = null;
+let balls = START_BALLS;
+let mikan = 0;
+let displayDist = 0;
+let nextStop = 1;
+let plungerPower = 0;
+let plungerHeld = false;
+let respawnTimer = 0;
+let stuckTimer = 0;
+let endTimer = 0;
+let clearPending = false;
+let sceneScroll = 0;
+let introT = 0;  // 理科大から飛ばされる演出の残り時間
+const MISSION_TIME = 4;
+let missionT = 0;  // 「飯田橋を目指せ！」表示の残り時間
+const popups = [];
+
+function resetGame() {
+  balls = START_BALLS;
+  mikan = 0;
+  displayDist = 0;
+  for (const f of [flippers.left, flippers.right]) { f.presses = []; f.brokenT = 0; f.clampT = 0; }
+  for (const name of Object.keys(TOWN_EVENTS)) evFade[name] = 0;
+  evTown = null;
+  inks.length = 0;
+  Object.assign(kani, { x: 250, dir: 1, mode: 'walk', t: 0, cool: 2 });
+  waveTimer = 3;
+  shakeT = 0;
+  ballLaneCool = 0;
+  Object.assign(seagull, { mode: 'away', x: GULL_OUT.x, y: GULL_OUT.y, aim: 0, rest: 0, wasHere: false });
+  Object.assign(rat, { mode: 'away', x: RAT_OUT.x, y: RAT_OUT.y, cool: 0, wasHere: false });
+  tunas.length = 0;
+  tunaWasHere = false;
+  tunaMurk = 0;
+  bubbles.length = 0;
+  nextStop = 1;
+  clearPending = false;
+  endTimer = 0;
+  holes.forEach(h => { h.cool = 0; });
+  popups.length = 0;
+  toastQueue.length = 0;
+  spawnBall();
+  buildRouteList();
+  updateHud();
+}
+
+// 球を失う（下に落ちた・カモメにとられた）
+function loseBall() {
+  ball = null;
+  if (!(testMode && tpInfinite.checked)) balls--;
+  beep(150, 0.4, 'sawtooth', 0.05);
+  respawnTimer = 1.0;
+  updateHud();
+}
+
+function spawnBall() {
+  shuffleLanes();
+  ball = { x: 464, y: 790 - BR - 0.5, vx: 0, vy: 0 };
+  stuckTimer = 0;
+}
+
+// ---------- サウンド ----------
+let actx = null;
+function beep(freq, dur = 0.06, type = 'square', vol = 0.04) {
+  if (!actx) return;
+  const o = actx.createOscillator(), g = actx.createGain();
+  o.type = type;
+  o.frequency.value = freq;
+  g.gain.setValueAtTime(vol, actx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.0001, actx.currentTime + dur);
+  o.connect(g).connect(actx.destination);
+  o.start();
+  o.stop(actx.currentTime + dur);
+}
+function jingle(notes, step = 0.1) {
+  notes.forEach((f, i) => setTimeout(() => beep(f, 0.15, 'triangle', 0.06), i * step * 1000));
+}
+
+// ---------- ミカン獲得と航海 ----------
+function addMikan(n, x, y) {
+  if (state !== 'play') return;
+  mikan += n;
+  popups.push({ x, y, text: `+${n}🍊`, t: 1, big: n >= 8 });
+  checkArrivals();
+  updateHud();
+}
+
+function checkArrivals() {
+  while (nextStop < ROUTE.length && mikan >= ROUTE[nextStop].d) {
+    const s = ROUTE[nextStop];
+    if (s.goal) {
+      clearPending = true;
+      showToast(`🎉 ${s.name}に到着！`, `${s.gift}でお祝い！`);
+    } else if (s.port) {
+      if (balls <= PORT_BONUS_IF) {
+        balls = Math.min(MAX_BALLS, balls + 1);
+        showToast(`⚓ ${s.name}に寄港！`, `${s.gift}をもらった！ 球が1個ふえた`);
+      } else {
+        showToast(`⚓ ${s.name}に寄港！`, `${s.gift}をもらった！（球は残り${PORT_BONUS_IF}個以下のときだけふえる）`);
+      }
+      jingle([523, 659, 784, 1047]);
+    } else {
+      showToast(`${s.name} を通過`, s.sub);
+    }
+    nextStop++;
+  }
+}
+
+// ---------- トースト ----------
+const toastEl = document.getElementById('toast');
+const toastQueue = [];
+let toastTimer = 0;
+function showToast(title, sub) {
+  toastQueue.push({ title, sub });
+}
+function updateToast(dt) {
+  if (toastTimer > 0) {
+    toastTimer -= dt;
+    if (toastTimer <= 0) toastEl.classList.remove('show');
+    return;
+  }
+  if (toastQueue.length) {
+    const t = toastQueue.shift();
+    toastEl.innerHTML = `${t.title}${t.sub ? `<small>${t.sub}</small>` : ''}`;
+    toastEl.classList.add('show');
+    toastTimer = 2.2;
+  }
+}
+
+// ---------- 物理 ----------
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+function inLane() {
+  return ball && ball.x > LANE_X && ball.y > 740;
+}
+
+function collideWall(w) {
+  const ex = w.x2 - w.x1, ey = w.y2 - w.y1;
+  // 一方通行：上から落ちてくるボールだけ受け止める
+  if (w.oneWay && (ball.vy < 0 || (ball.x - w.x1) * ey - (ball.y - w.y1) * ex < 0)) return;
+  const t = clamp(((ball.x - w.x1) * ex + (ball.y - w.y1) * ey) / (ex * ex + ey * ey), 0, 1);
+  const cx = w.x1 + ex * t, cy = w.y1 + ey * t;
+  const dx = ball.x - cx, dy = ball.y - cy;
+  const d2 = dx * dx + dy * dy;
+  const R = BR + (w.th || 0);
+  if (d2 >= R * R) return;
+  const d = Math.sqrt(d2) || 0.0001;
+  const nx = dx / d, ny = dy / d;
+  ball.x = cx + nx * R;
+  ball.y = cy + ny * R;
+  const vn = ball.vx * nx + ball.vy * ny;
+  if (vn < 0) {
+    ball.vx -= (1 + w.e) * vn * nx;
+    ball.vy -= (1 + w.e) * vn * ny;
+    if (w.kick && -vn > 60) {
+      ball.vx += nx * w.kick;
+      ball.vy += ny * w.kick;
+      w.sling.flash = 0.12;
+      beep(330, 0.05);
+      addMikan(1, cx, cy);
+    }
+  }
+}
+
+function collideBumper(bp) {
+  const dx = ball.x - bp.x, dy = ball.y - bp.y;
+  const R = BR + bp.r;
+  const d2 = dx * dx + dy * dy;
+  if (d2 >= R * R) return;
+  const d = Math.sqrt(d2) || 0.0001;
+  const nx = dx / d, ny = dy / d;
+  ball.x = bp.x + nx * R;
+  ball.y = bp.y + ny * R;
+  const vn = ball.vx * nx + ball.vy * ny;
+  if (vn < 0) {
+    ball.vx -= 1.8 * vn * nx;
+    ball.vy -= 1.8 * vn * ny;
+  }
+  ball.vx += nx * 280;
+  ball.vy += ny * 280;
+  bp.flash = 0.15;
+  onBumperHit();
+  beep(660 + Math.random() * 120, 0.05);
+  addMikan(1, bp.x, bp.y - bp.r);
+}
+
+// フリッパーの形：付け根が太く先が細い。上の面はガイドと一続きのまま、下側だけふくらませる
+function flipperShape(f) {
+  const ux = Math.cos(f.ang), uy = Math.sin(f.ang);
+  const dx = -uy * f.side, dy = ux * f.side;  // 下側の向き
+  const o0 = FLIP_R0 - FLIP_TH, o1 = FLIP_R1 - FLIP_TH;
+  return {
+    x0: f.px + dx * o0, y0: f.py + dy * o0, r0: FLIP_R0,
+    x1: f.px + ux * f.len + dx * o1, y1: f.py + uy * f.len + dy * o1, r1: FLIP_R1,
+  };
+}
+
+function collideFlipper(f) {
+  const k = flipperShape(f);
+  const ex = k.x1 - k.x0, ey = k.y1 - k.y0;
+  const t = clamp(((ball.x - k.x0) * ex + (ball.y - k.y0) * ey) / (ex * ex + ey * ey), 0, 1);
+  const cx = k.x0 + ex * t, cy = k.y0 + ey * t;
+  const R = BR + k.r0 + (k.r1 - k.r0) * t;
+  const dx = ball.x - cx, dy = ball.y - cy;
+  const d2 = dx * dx + dy * dy;
+  if (d2 >= R * R) return;
+  const d = Math.sqrt(d2) || 0.0001;
+  const nx = dx / d, ny = dy / d;
+  ball.x = cx + nx * R;
+  ball.y = cy + ny * R;
+  // 接触点でのフリッパーの速度
+  const rx = cx - f.px, ry = cy - f.py;
+  const fvx = -f.omega * ry, fvy = f.omega * rx;
+  let relx = ball.vx - fvx, rely = ball.vy - fvy;
+  const vn = relx * nx + rely * ny;
+  if (vn < 0) {
+    relx -= 1.25 * vn * nx;
+    rely -= 1.25 * vn * ny;
+    ball.vx = relx + fvx;
+    ball.vy = rely + fvy;
+  }
+}
+
+// ---------- カモメ ----------
+// 八戸（蕪島はウミネコの繁殖地）と気仙沼（ウミネコのえさやりが名物）の近くでは、
+// 台の右上にカモメが構えていて、ゆっくりふわっと動く球をさらっていく
+const GULL_TOWNS = ['八戸', '気仙沼'];
+const GULL_PERCH = { x: 395, y: 165 };             // カモメが構える場所
+const GULL_ZONE = { x0: 240, x1: 445, y1: 400 };   // ねらわれる右上の範囲
+const GULL_SPEED = 350;     // これより遅い球をねらう
+const GULL_AIM_TIME = 0.15; // 遅いままこの秒数たつと飛んでくる
+const GULL_REST = 3.5;        // 球をとったあと戻ってくるまでの秒数
+const GULL_OUT = { x: 560, y: -60 };               // 飛んでいく先（画面の外）
+const seagull = { mode: 'away', x: GULL_OUT.x, y: GULL_OUT.y, aim: 0, rest: 0, t: 0, wasHere: false };
+
+// カモメの町の、ひとつ前の町を出てから次の町に着くまでの間はカモメがいる
+function gullTownNow() {
+  if (introT > 0) return false;
+  const i = currentSegment();
+  return GULL_TOWNS.includes(ROUTE[i].name) || (i + 1 < ROUTE.length && GULL_TOWNS.includes(ROUTE[i + 1].name));
+}
+
+function gullMove(tx, ty, speed, dt) {
+  const dx = tx - seagull.x, dy = ty - seagull.y, d = Math.hypot(dx, dy);
+  const step = speed * dt;
+  if (d <= step) { seagull.x = tx; seagull.y = ty; return true; }
+  seagull.x += dx / d * step;
+  seagull.y += dy / d * step;
+  return false;
+}
+
+function updateGull(dt) {
+  const here = state === 'play' && gullTownNow();
+  if (here && !seagull.wasHere) showToast('🐦 カモメ注意！', '右上でゆっくり動く球は、カモメにとられるよ');
+  seagull.wasHere = here;
+  if (seagull.rest > 0) seagull.rest -= dt;
+  seagull.t += dt;
+
+  switch (seagull.mode) {
+    case 'away':
+      if (here && seagull.rest <= 0) seagull.mode = 'arrive';
+      break;
+    case 'arrive':
+      if (gullMove(GULL_PERCH.x, GULL_PERCH.y, 260, dt)) { seagull.mode = 'perch'; seagull.aim = 0; }
+      if (!here) seagull.mode = 'leave';
+      break;
+    case 'perch': {
+      if (!here) { seagull.mode = 'leave'; break; }
+      const slow = ball && !inLane() && ball.x > GULL_ZONE.x0 && ball.x < GULL_ZONE.x1 && ball.y < GULL_ZONE.y1
+        && Math.hypot(ball.vx, ball.vy) < GULL_SPEED;
+      seagull.aim = slow ? seagull.aim + dt : 0;
+      if (seagull.aim >= GULL_AIM_TIME) { seagull.mode = 'swoop'; seagull.t = 0; beep(1400, 0.08, 'triangle', 0.05); }
+      break;
+    }
+    case 'swoop':
+      // 球めがけて急降下。間に合わなければあきらめる
+      if (!ball || seagull.t > 0.6) { seagull.mode = 'leave'; break; }
+      if (gullMove(ball.x, ball.y - 6, 900, dt)) {
+        seagull.mode = 'carry';
+        popups.push({ x: seagull.x, y: seagull.y - 20, text: 'カモメに球をとられた！', t: 1.6, big: true });
+        jingle([1568, 1175, 1568, 1175], 0.07);
+      }
+      break;
+    case 'carry':
+      if (ball) { ball.x = seagull.x; ball.y = seagull.y + 10; ball.vx = 0; ball.vy = 0; }
+      if (gullMove(GULL_OUT.x, GULL_OUT.y, 420, dt)) {
+        loseBall();
+        seagull.mode = 'away';
+        seagull.rest = GULL_REST;
+      }
+      break;
+    case 'leave':
+      if (gullMove(GULL_OUT.x, GULL_OUT.y, 300, dt)) seagull.mode = 'away';
+      break;
+  }
+}
+
+function drawGull() {
+  if (seagull.mode === 'away') return;
+  const flying = seagull.mode !== 'perch';
+  const flap = flying ? Math.sin(seagull.t * 18) : Math.sin(seagull.t * 3) * 0.25;
+  ctx.save();
+  // 大きめに描く（体の真ん中を中心に1.6倍）
+  ctx.translate(seagull.x, seagull.y);
+  ctx.scale(1.6, 1.6);
+  const x = 0, y = 0;
+  // 羽
+  ctx.fillStyle = '#9aa3ad';
+  for (const s of [-1, 1]) {
+    ctx.beginPath();
+    ctx.moveTo(x + s * 3, y - 2);
+    ctx.quadraticCurveTo(x + s * 14, y - 14 - flap * 10, x + s * 26, y - 6 - flap * 14);
+    ctx.quadraticCurveTo(x + s * 14, y - 2, x + s * 3, y + 3);
+    ctx.fill();
+  }
+  // 体と頭
+  ctx.fillStyle = '#ffffff';
+  ctx.strokeStyle = '#5d6b7a';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.ellipse(x, y, 13, 8, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.beginPath(); ctx.arc(x - 12, y - 5, 6, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#f5b800';
+  ctx.beginPath(); ctx.moveTo(x - 17, y - 6); ctx.lineTo(x - 25, y - 4); ctx.lineTo(x - 17, y - 2); ctx.fill();
+  ctx.fillStyle = '#222';
+  ctx.beginPath(); ctx.arc(x - 13, y - 6, 1.4, 0, Math.PI * 2); ctx.fill();
+  // 構えているときは「！」でねらっているのを知らせる
+  if (seagull.mode === 'perch' && seagull.aim > 0) {
+    ctx.font = 'bold 16px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#c0392b';
+    ctx.fillText('！', x, y - 18);
+  }
+  ctx.restore();
+}
+
+// ---------- ネズミ ----------
+// 都会（東京）の町の近くでは、左下の坂にネズミが待ちかまえていて、
+// 坂を球が転がるとミカンをかじる。ミカンが減るので船も戻ってしまう
+const RAT_TOWNS = ['竹芝', '浅草橋', '秋葉原', '御茶ノ水'];
+const RAT_BITE = 10;     // 1回にかじるミカンの数
+const RAT_COOL = 1.5;    // 次にかじれるまでの秒数
+const RAT_HOME_U = 0.22; // 坂のどこで待つか（0 = 左の壁、1 = フリッパーの付け根）
+const RAT_OUT = { x: -30, y: 650 };   // 出てくる・帰っていく所（台の左下の外）
+const rat = { mode: 'away', x: RAT_OUT.x, y: RAT_OUT.y, tx: 0, ty: 0, t: 0, cool: 0, wasHere: false };
+
+// 坂の上（球が転がる面）の点。u は坂の始まりから終わりまで 0〜1
+function slopePoint(u) {
+  const ax = leftGuide.x1, ay = leftGuide.y1, bx = leftGuide.x2, by = leftGuide.y2;
+  const len = Math.hypot(bx - ax, by - ay);
+  const nx = (by - ay) / len, ny = -(bx - ax) / len;  // 坂の上側の向き
+  return { x: ax + (bx - ax) * u + nx * (FLIP_TH + 9), y: ay + (by - ay) * u + ny * (FLIP_TH + 9) };
+}
+
+function ratTownNow() {
+  if (introT > 0) return false;
+  const i = currentSegment();
+  return RAT_TOWNS.includes(ROUTE[i].name) || (i + 1 < ROUTE.length && RAT_TOWNS.includes(ROUTE[i + 1].name));
+}
+
+// 球が左下の坂の上を転がっているか（坂の上の位置 u も返す）
+function ballOnLeftSlope() {
+  if (!ball) return -1;
+  const w = leftGuide, ex = w.x2 - w.x1, ey = w.y2 - w.y1;
+  const u = clamp(((ball.x - w.x1) * ex + (ball.y - w.y1) * ey) / (ex * ex + ey * ey), 0, 1);
+  const d = Math.hypot(ball.x - (w.x1 + ex * u), ball.y - (w.y1 + ey * u));
+  return d <= BR + FLIP_TH + 2 && u < 0.97 ? u : -1;
+}
+
+function ratMove(tx, ty, speed, dt) {
+  const dx = tx - rat.x, dy = ty - rat.y, d = Math.hypot(dx, dy);
+  if (d <= speed * dt) { rat.x = tx; rat.y = ty; return true; }
+  rat.x += dx / d * speed * dt;
+  rat.y += dy / d * speed * dt;
+  return false;
+}
+
+function loseMikan(n, x, y) {
+  if (state !== 'play') return;
+  const lost = Math.min(n, mikan);
+  if (lost <= 0) return;
+  mikan -= lost;
+  popups.push({ x, y, text: `-${lost}🍊`, t: 1.2, big: true });
+  updateHud();
+}
+
+function updateRat(dt) {
+  const here = state === 'play' && ratTownNow();
+  if (here && !rat.wasHere) showToast('🐭 ネズミ注意！', '左下の坂を球が転がると、ミカンを食べられて船が戻っちゃう');
+  rat.wasHere = here;
+  if (rat.cool > 0) rat.cool -= dt;
+  rat.t += dt;
+  const home = slopePoint(RAT_HOME_U);
+
+  switch (rat.mode) {
+    case 'away':
+      if (here) rat.mode = 'arrive';
+      break;
+    case 'arrive':
+      if (ratMove(home.x, home.y, 160, dt)) rat.mode = 'wait';
+      if (!here) rat.mode = 'leave';
+      break;
+    case 'wait': {
+      if (!here) { rat.mode = 'leave'; break; }
+      const u = ballOnLeftSlope();
+      if (u >= 0 && rat.cool <= 0) {
+        // 球のところへ走っていってミカンをかじる
+        const p = slopePoint(Math.max(0, u - 0.08));
+        rat.tx = p.x; rat.ty = p.y;
+        rat.cool = RAT_COOL;
+        rat.mode = 'eat';
+        rat.t = 0;
+        loseMikan(RAT_BITE, ball.x, ball.y - 24);
+        popups.push({ x: 120, y: 540, text: 'ネズミにミカンを食べられた！', t: 1.6, big: true });
+        jingle([330, 262, 220], 0.08);
+      }
+      break;
+    }
+    case 'eat':
+      ratMove(rat.tx, rat.ty, 600, dt);
+      if (rat.t > 0.6) rat.mode = 'back';
+      break;
+    case 'back':
+      if (ratMove(home.x, home.y, 300, dt)) rat.mode = 'wait';
+      break;
+    case 'leave':
+      if (ratMove(RAT_OUT.x, RAT_OUT.y, 200, dt)) rat.mode = 'away';
+      break;
+  }
+}
+
+function drawRat() {
+  if (rat.mode === 'away') return;
+  const run = rat.mode !== 'wait';
+  const hop = run ? Math.abs(Math.sin(rat.t * 20)) * 3 : 0;
+  ctx.save();
+  ctx.translate(rat.x, rat.y - hop);
+  ctx.rotate(GUIDE_ANG);
+  ctx.scale(1.5, 1.5);
+  // しっぽ
+  ctx.strokeStyle = '#d98c9a';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(-9, 2);
+  ctx.quadraticCurveTo(-18, 2 + Math.sin(rat.t * 8) * 4, -22, -4);
+  ctx.stroke();
+  // 体と頭
+  ctx.fillStyle = '#8a8f99';
+  ctx.strokeStyle = '#4a4f58';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.ellipse(0, 0, 10, 6.5, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.beginPath(); ctx.ellipse(9, -2, 5.5, 4.5, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  // 耳
+  ctx.fillStyle = '#f2b6c1';
+  ctx.beginPath(); ctx.arc(7, -7, 3, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  // 鼻と目
+  ctx.fillStyle = '#e8708a';
+  ctx.beginPath(); ctx.arc(14.5, -1.5, 1.4, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#111';
+  ctx.beginPath(); ctx.arc(10.5, -3.5, 1.1, 0, Math.PI * 2); ctx.fill();
+  // かじっているときはミカンを持っている
+  if (rat.mode === 'eat') drawMikan(ctx, 15, 3, 3.5);
+  ctx.restore();
+}
+
+// ---------- マグロの大群 ----------
+// 銚子（近海マグロの水揚げが日本一）の近くでは、マグロの群れが台の上を泳ぎ回って
+// 球が見えにくくなる（見た目だけで、球の動きには影響しない）
+const TUNA_TOWNS = ['銚子'];
+const TUNA_COUNT = 26;   // 同時に泳いでいるマグロの数
+const tunas = [];
+let tunaWasHere = false;
+let tunaMurk = 0;        // 海のにごり（0〜1）。マグロがいる間だけ濃くなる
+const bubbles = [];
+
+function tunaTownNow() {
+  if (introT > 0) return false;
+  const i = currentSegment();
+  return TUNA_TOWNS.includes(ROUTE[i].name) || (i + 1 < ROUTE.length && TUNA_TOWNS.includes(ROUTE[i + 1].name));
+}
+
+function spawnTuna() {
+  const dir = Math.random() < 0.5 ? 1 : -1;
+  const len = 70 + Math.random() * 45;
+  tunas.push({
+    dir, len,
+    x: dir > 0 ? -len : W + len,
+    y: 110 + Math.random() * 640,
+    speed: 110 + Math.random() * 120,
+    phase: Math.random() * 6,
+  });
+}
+
+function updateTuna(dt) {
+  const here = state === 'play' && tunaTownNow();
+  if (here && !tunaWasHere) showToast('🐟 マグロの大群！', '銚子の海はマグロがいっぱい。球が見えにくいぞ');
+  tunaWasHere = here;
+  for (const f of tunas) { f.x += f.dir * f.speed * dt; f.phase += dt * 8; }
+  for (let i = tunas.length - 1; i >= 0; i--) {
+    const f = tunas[i];
+    if (f.x < -f.len * 1.5 || f.x > W + f.len * 1.5) tunas.splice(i, 1);
+  }
+  // 少しずつ入ってくるように、1回に1匹まで足す
+  if (here && tunas.length < TUNA_COUNT && Math.random() < dt * 10) spawnTuna();
+  // にごりと泡
+  tunaMurk = clamp(tunaMurk + (here ? 0.5 : -0.5) * dt, 0, 1);
+  if (tunaMurk > 0 && Math.random() < dt * 30 * tunaMurk) {
+    bubbles.push({ x: 30 + Math.random() * 440, y: H, r: 2 + Math.random() * 5, v: 60 + Math.random() * 90 });
+  }
+  for (const b of bubbles) { b.y -= b.v * dt; b.x += Math.sin(b.y * 0.05) * 0.5; }
+  for (let i = bubbles.length - 1; i >= 0; i--) if (bubbles[i].y < 0) bubbles.splice(i, 1);
+  // マグロが去ったら、泡もにごりと一緒に消す
+  if (tunaMurk <= 0) bubbles.length = 0;
+}
+
+function drawTuna() {
+  if (tunaMurk > 0) {
+    ctx.fillStyle = `rgba(20, 60, 110, ${0.35 * tunaMurk})`;
+    ctx.fillRect(0, 0, W, H);
+  }
+  ctx.strokeStyle = `rgba(255,255,255,${0.6 * tunaMurk})`;  // にごりが薄くなると泡も薄くなる
+  ctx.lineWidth = 1.5;
+  for (const b of bubbles) { ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2); ctx.stroke(); }
+  for (const f of tunas) {
+    const L = f.len, H2 = L * 0.22;
+    ctx.save();
+    ctx.translate(f.x, f.y + Math.sin(f.phase * 0.5) * 3);
+    ctx.scale(f.dir, 1);  // 頭が進む向き
+    // しっぽ（左右にふる）
+    const wag = Math.sin(f.phase) * H2 * 0.5;
+    ctx.fillStyle = '#1d2f55';
+    ctx.beginPath();
+    ctx.moveTo(-L * 0.45, 0);
+    ctx.lineTo(-L * 0.68, -H2 * 1.3 + wag);
+    ctx.lineTo(-L * 0.58, wag * 0.5);
+    ctx.lineTo(-L * 0.68, H2 * 1.3 + wag);
+    ctx.closePath();
+    ctx.fill();
+    // 体（背中は紺、おなかは銀）
+    const g = ctx.createLinearGradient(0, -H2, 0, H2);
+    g.addColorStop(0, '#1d2f55');
+    g.addColorStop(0.5, '#3d5f8f');
+    g.addColorStop(0.55, '#c9d3df');
+    g.addColorStop(1, '#eef2f6');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, L * 0.5, H2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // 背びれ・小さな黄色いひれ
+    ctx.fillStyle = '#1d2f55';
+    ctx.beginPath();
+    ctx.moveTo(-L * 0.05, -H2 * 0.9); ctx.lineTo(L * 0.05, -H2 * 1.7); ctx.lineTo(L * 0.15, -H2 * 0.8);
+    ctx.fill();
+    ctx.fillStyle = '#f5c400';
+    for (let k = 0; k < 4; k++) {
+      const fx = -L * 0.2 - k * L * 0.06;
+      ctx.beginPath(); ctx.moveTo(fx, -H2 * 0.75); ctx.lineTo(fx - L * 0.025, -H2 * 1.05); ctx.lineTo(fx - L * 0.05, -H2 * 0.7); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(fx, H2 * 0.75); ctx.lineTo(fx - L * 0.025, H2 * 1.05); ctx.lineTo(fx - L * 0.05, H2 * 0.7); ctx.fill();
+    }
+    // 目
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(L * 0.33, -H2 * 0.15, H2 * 0.28, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#111';
+    ctx.beginPath(); ctx.arc(L * 0.34, -H2 * 0.15, H2 * 0.15, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+}
+
+// ---------- 町ごとのイベント ----------
+// 船がその町にいちばん近い間だけ起こる
+const TOWN_EVENTS = {
+  '長万部': { title: '🦀 カニが出た！', sub: 'カニにはさまれたフリッパーは、しばらく動かない' },
+  '函館':   { title: '🦑 函館のイカ', sub: 'バンパーに当たるとイカが墨をはくぞ' },
+  '釜石':   { title: '🏗️ 鉄の町の鉄骨', sub: 'クレーンの鉄骨が左右に動いて、球をはね返すぞ' },
+  '大船渡': { title: '🪨 碁石海岸の岩', sub: '台に岩が出てきて、球がはね返る' },
+  '石巻':   { title: '🌊 北上川の流れ', sub: '球が横に流される' },
+  '大洗':   { title: '🌊 大波が来る！', sub: 'ときどき台がゆれて、球が押される' },
+  '館山':   { title: '🌅 夕日がまぶしい', sub: '台の一部が光って見えにくい' },
+};
+const evFade = {};          // イベントごとの強さ（0〜1）。ふわっと始まって、ふわっと終わる
+let evTown = null;          // いまイベントが起きている町
+
+function eventTownNow() {
+  if (introT > 0 || state !== 'play') return null;
+  const i = currentSegment(), f = segmentFrac(i);
+  const ti = i >= ROUTE.length - 1 || f < 0.5 ? i : i + 1;
+  return TOWN_EVENTS[ROUTE[ti].name] ? ROUTE[ti].name : null;
+}
+const ev = name => evFade[name] || 0;
+
+// --- 長万部：カニ ---
+const CRAB_CLAMP = 2.5;     // はさまれたフリッパーが動かない秒数
+const CRAB_COOL = 5;        // 次にはさむまでの秒数
+const kani = { x: 250, dir: 1, mode: 'walk', t: 0, cool: 2, side: null };
+
+// --- 函館：イカ墨 ---
+const inks = [];
+
+// --- 釜石：クレーンの鉄骨 ---
+const BEAM = { y: 355, len: 120, th: 8 };  // th は鉄骨の半分の太さ
+let beamX = 250, beamVx = 0;
+
+// --- 大船渡：岩 ---
+const ROCKS = [
+  { x: 172, y: 372, r: 20 },
+  { x: 328, y: 372, r: 20 },
+  { x: 250, y: 560, r: 22 },
+];
+
+// --- 石巻：川の流れ ---
+const CURRENT_ACC = 320;    // 球を横に押す強さ
+
+// --- 大洗：大波 ---
+let waveTimer = 3, shakeT = 0, waveDir = 1;
+
+// --- 館山：夕日 ---
+let sunX = 120;
+
+function updateTownEvents(dt) {
+  const town = eventTownNow();
+  if (town && town !== evTown) showToast(TOWN_EVENTS[town].title, TOWN_EVENTS[town].sub);
+  evTown = town;
+  for (const name of Object.keys(TOWN_EVENTS)) {
+    evFade[name] = clamp(ev(name) + (name === town ? 0.7 : -0.7) * dt, 0, 1);
+  }
+
+  // カニ：台の下を横歩きして、フリッパーの下に来たらはさむ
+  kani.t += dt;
+  if (kani.cool > 0) kani.cool -= dt;
+  if (kani.mode === 'walk') {
+    kani.x += kani.dir * 70 * dt;
+    if (kani.x < 150) { kani.x = 150; kani.dir = 1; }
+    if (kani.x > 350) { kani.x = 350; kani.dir = -1; }
+    if (ev('長万部') > 0.9 && kani.cool <= 0 && state === 'play') {
+      const side = kani.x > 185 && kani.x < 225 ? 'left' : kani.x > 275 && kani.x < 315 ? 'right' : null;
+      if (side) {
+        const f = flippers[side];
+        f.clampT = CRAB_CLAMP;
+        f.pressed = false;
+        kani.mode = 'clamp'; kani.side = side; kani.t = 0;
+        popups.push({ x: kani.x, y: 700, text: 'カニにはさまれた！', t: 1.5, big: true });
+        beep(200, 0.15, 'square', 0.05);
+      }
+    }
+  } else if (kani.t > CRAB_CLAMP) {
+    kani.mode = 'walk';
+    kani.cool = CRAB_COOL;
+  }
+
+  // イカ墨は少しずつ消える
+  for (const k of inks) k.t -= dt;
+  for (let i = inks.length - 1; i >= 0; i--) if (inks[i].t <= 0) inks.splice(i, 1);
+
+  // 鉄骨はゆっくり左右に動く
+  const bx = 225 + Math.sin(clock * 0.9) * 115;
+  beamVx = dt > 0 ? (bx - beamX) / dt : 0;
+  beamX = bx;
+
+  // 大波：ときどき台がゆれて、球が横に押される
+  if (shakeT > 0) shakeT -= dt;
+  if (ev('大洗') > 0.9 && state === 'play') {
+    waveTimer -= dt;
+    if (waveTimer <= 0) {
+      waveTimer = 4 + Math.random() * 3;
+      shakeT = 0.6;
+      waveDir = Math.random() < 0.5 ? -1 : 1;
+      if (ball && !inLane()) { ball.vx += waveDir * 320; ball.vy -= 180; }
+      popups.push({ x: 250, y: 300, text: 'ザブーン！', t: 1.2, big: true });
+      beep(80, 0.5, 'sawtooth', 0.06);
+    }
+  }
+
+  // 夕日はゆっくり左右に動く
+  sunX = 250 + Math.sin(clock * 0.35) * 170;
+}
+
+// バンパーに当たったとき（函館ではイカが墨をはく）
+function onBumperHit() {
+  if (ev('函館') < 0.5 || inks.length >= 7) return;
+  inks.push({ x: 60 + Math.random() * 380, y: 120 + Math.random() * 560, r: 35 + Math.random() * 35, t: 4, seed: Math.random() * 100 });
+}
+
+// 球にかかる力（川の流れ）
+function applyTownForces(dt) {
+  if (!ball || inLane()) return;
+  const c = ev('石巻');
+  if (c > 0) ball.vx += Math.sin(clock * 0.5) * CURRENT_ACC * c * dt;
+}
+
+// 岩との当たり判定（大船渡）
+function collideRocks() {
+  if (ev('大船渡') < 0.5 || !ball) return;
+  for (const r of ROCKS) {
+    const dx = ball.x - r.x, dy = ball.y - r.y, R = BR + r.r, d = Math.hypot(dx, dy);
+    if (d >= R || d === 0) continue;
+    const nx = dx / d, ny = dy / d;
+    ball.x = r.x + nx * R;
+    ball.y = r.y + ny * R;
+    const vn = ball.vx * nx + ball.vy * ny;
+    if (vn < 0) { ball.vx -= 1.5 * vn * nx; ball.vy -= 1.5 * vn * ny; }
+  }
+}
+
+// 鉄骨との当たり判定（釜石）。動いている鉄骨にぶつかると押し返される
+function collideBeam() {
+  if (ev('釜石') < 0.5 || !ball) return;
+  const half = BEAM.len / 2;
+  const px = clamp(ball.x, beamX - half, beamX + half);
+  const dx = ball.x - px, dy = ball.y - BEAM.y, R = BR + BEAM.th, d = Math.hypot(dx, dy);
+  if (d >= R || d === 0) return;
+  const nx = dx / d, ny = dy / d;
+  ball.x = px + nx * R;
+  ball.y = BEAM.y + ny * R;
+  // 鉄骨といっしょに動く目線で、はね返す
+  const rvx = ball.vx - beamVx, vn = rvx * nx + ball.vy * ny;
+  if (vn < 0) {
+    ball.vx -= 1.8 * vn * nx;
+    ball.vy -= 1.8 * vn * ny;
+    if (-vn > 150) beep(260, 0.05, 'square', 0.04);
+  }
+}
+
+// 球より下に描くもの（鉄骨・岩・流れ・カニ）
+function drawTownEventsUnder() {
+  const m = ev('釜石');
+  if (m > 0) {
+    const half = BEAM.len / 2, hookY = BEAM.y - 70;
+    ctx.save();
+    ctx.globalAlpha = m;
+    // クレーンのワイヤーとフック
+    ctx.strokeStyle = '#333';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(beamX, 0); ctx.lineTo(beamX, hookY); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(beamX - half + 12, BEAM.y - BEAM.th); ctx.lineTo(beamX, hookY);
+    ctx.lineTo(beamX + half - 12, BEAM.y - BEAM.th);
+    ctx.stroke();
+    ctx.fillStyle = '#f2c230';
+    ctx.fillRect(beamX - 7, hookY - 8, 14, 10);
+    // 鉄骨（赤いH形鋼）
+    ctx.fillStyle = '#b8352a';
+    ctx.fillRect(beamX - half, BEAM.y - BEAM.th, BEAM.len, BEAM.th * 2);
+    ctx.fillStyle = '#7d221b';
+    ctx.fillRect(beamX - half, BEAM.y - BEAM.th, BEAM.len, 3);
+    ctx.fillRect(beamX - half, BEAM.y + BEAM.th - 3, BEAM.len, 3);
+    ctx.fillStyle = '#e8c9a0';
+    for (let k = -2; k <= 2; k++) {
+      ctx.beginPath(); ctx.arc(beamX + k * 22, BEAM.y, 1.8, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  const r = ev('大船渡');
+  if (r > 0) {
+    for (const k of ROCKS) {
+      const s = Math.min(1, r * 1.5);
+      ctx.save();
+      ctx.translate(k.x, k.y);
+      ctx.scale(s, s);
+      ctx.fillStyle = '#7a6f62';
+      ctx.strokeStyle = '#4a4238';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (let a = 0; a < 8; a++) {
+        const ang = a / 8 * Math.PI * 2, rr = k.r * (0.9 + 0.12 * Math.sin(a * 2.3));
+        a === 0 ? ctx.moveTo(Math.cos(ang) * rr, Math.sin(ang) * rr) : ctx.lineTo(Math.cos(ang) * rr, Math.sin(ang) * rr);
+      }
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = 'rgba(255,255,255,0.25)';
+      ctx.beginPath(); ctx.arc(-k.r * 0.3, -k.r * 0.35, k.r * 0.3, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  const c = ev('石巻');
+  if (c > 0) {
+    const dir = Math.sin(clock * 0.5);
+    ctx.save();
+    ctx.globalAlpha = 0.55 * c * Math.min(1, Math.abs(dir) * 2 + 0.2);
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2;
+    for (let k = 0; k < 14; k++) {
+      const y = 130 + k * 45;
+      const x = ((clock * 160 * Math.sign(dir) + k * 97) % 520 + 520) % 520 - 10;
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + 28 * Math.sign(dir || 1), y); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x + 22 * Math.sign(dir || 1), y - 4); ctx.lineTo(x + 28 * Math.sign(dir || 1), y); ctx.lineTo(x + 22 * Math.sign(dir || 1), y + 4); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  if (ev('長万部') > 0) {
+    ctx.save();
+    ctx.globalAlpha = ev('長万部');
+    const cx = kani.mode === 'clamp' ? (kani.side === 'left' ? 205 : 295) : kani.x;
+    const cy = kani.mode === 'clamp' ? 762 : 785;
+    ctx.translate(cx, cy);
+    ctx.scale(1.3, 1.3);
+    const step = kani.mode === 'walk' ? Math.sin(kani.t * 14) * 2 : 0;
+    ctx.strokeStyle = '#c0392b';
+    ctx.lineWidth = 2.5;
+    for (const s of [-1, 1]) {
+      for (let k = 0; k < 3; k++) {
+        ctx.beginPath();
+        ctx.moveTo(s * 8, 2 + k * 3);
+        ctx.lineTo(s * 16, k * 4 + (k % 2 ? step : -step));
+        ctx.lineTo(s * 19, 8 + k * 3);
+        ctx.stroke();
+      }
+      // はさみ（はさんでいるときは上にのばす）
+      const up = kani.mode === 'clamp' ? -12 : -6;
+      ctx.beginPath(); ctx.moveTo(s * 7, -3); ctx.lineTo(s * 12, up); ctx.stroke();
+      ctx.fillStyle = '#e8452c';
+      ctx.beginPath(); ctx.arc(s * 13, up - 3, 4.5, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.fillStyle = '#e8452c';
+    ctx.beginPath(); ctx.ellipse(0, 2, 11, 7, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(-3.5, -5, 2.4, 0, Math.PI * 2); ctx.arc(3.5, -5, 2.4, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#111';
+    ctx.beginPath(); ctx.arc(-3.5, -5, 1.2, 0, Math.PI * 2); ctx.arc(3.5, -5, 1.2, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+}
+
+// 球より上に描くもの（イカ墨・夕日）
+function drawTownEventsOver() {
+  for (const k of inks) {
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, k.t) * 0.92;
+    ctx.fillStyle = '#0b0b14';
+    ctx.beginPath(); ctx.arc(k.x, k.y, k.r, 0, Math.PI * 2); ctx.fill();
+    for (let i = 0; i < 6; i++) {
+      const a = k.seed + i * 1.1, d = k.r * (0.8 + 0.3 * Math.sin(k.seed * i));
+      ctx.beginPath(); ctx.arc(k.x + Math.cos(a) * d, k.y + Math.sin(a) * d, k.r * 0.35, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  const s = ev('館山');
+  if (s > 0) {
+    const sy = 380 + Math.sin(clock * 0.5) * 60;
+    const g = ctx.createRadialGradient(sunX, sy, 10, sunX, sy, 190);
+    g.addColorStop(0, `rgba(255, 252, 235, ${0.97 * s})`);
+    g.addColorStop(0.35, `rgba(255, 220, 140, ${0.85 * s})`);
+    g.addColorStop(1, 'rgba(255, 170, 60, 0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+  }
+}
+
+function isBallLane(h) {
+  return !!h.isBall;
+}
+
+// 上のレーンの並びをランダムに決め直す
+function shuffleLanes() {
+  const kinds = balls < MAX_BALLS && ballLaneCool <= 0 ? [8, 20, 'ball'] : [8, 8, 20];
+  for (let i = kinds.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [kinds[i], kinds[j]] = [kinds[j], kinds[i]];
+  }
+  holes.filter(h => h.lane).forEach((h, i) => {
+    h.isBall = kinds[i] === 'ball';
+    h.val = h.isBall ? 0 : kinds[i];
+  });
+}
+
+// 球が上限になった・上限でなくなったときに、球+1があるかどうかを合わせる
+function updateBallLane(dt) {
+  if (ballLaneCool > 0) ballLaneCool -= dt;
+  const want = balls < MAX_BALLS && ballLaneCool <= 0;
+  if (want !== holes.some(isBallLane)) shuffleLanes();
+}
+
+function updateHoles(dt) {
+  for (const h of holes) {
+    if (h.cool > 0) h.cool -= dt;
+    const inside = Math.hypot(h.x - ball.x, h.y - ball.y) < h.r + BR - 2;
+    if (inside && !h.inside && h.cool <= 0) {
+      // ポイントを通過した！
+      h.flash = 0.5;
+      if (isBallLane(h)) {
+        h.cool = 1.5;
+        ballLaneCool = BALL_LANE_COOL;
+        balls = Math.min(MAX_BALLS, balls + 1);
+        shuffleLanes();
+        popups.push({ x: h.x, y: h.y - 22, text: '球+1！', t: 1.3, big: true });
+        jingle([523, 784, 1047], 0.08);
+        updateHud();
+      } else {
+        h.cool = h.val >= 20 ? 3 : 1.5;  // 続けて取れないように少し休む
+        jingle(h.val >= 20 ? [784, 988, 1175, 1568] : [660, 880], 0.07);
+        addMikan(h.val, h.x, h.y - 16);
+      }
+    }
+    h.inside = inside;
+  }
+}
+
+
+function updateFlipper(f, dt) {
+  const target = f.pressed ? f.up : f.rest;
+  const speed = 24 * dt;
+  const prev = f.ang;
+  if (Math.abs(target - f.ang) <= speed) f.ang = target;
+  else f.ang += Math.sign(target - f.ang) * speed;
+  f.omega = (f.ang - prev) / dt;
+}
+
+function physicsStep(dt) {
+  updateFlipper(flippers.left, dt);
+  updateFlipper(flippers.right, dt);
+  if (!ball) return;
+  if (seagull.mode === 'carry') return;  // カモメが球を運んでいる
+
+  // 発射レーンで待機中
+  if (inLane() && plungerHeld && Math.abs(ball.vy) < 50) {
+    ball.vx = 0; ball.vy = 0;
+    ball.y = 790 - BR - 0.5 + plungerPower * 20;
+    return;
+  }
+
+  applyTownForces(dt);
+  ball.vy += G * dt;
+  const sp = Math.hypot(ball.vx, ball.vy);
+  if (sp > MAXV) { ball.vx *= MAXV / sp; ball.vy *= MAXV / sp; }
+  ball.x += ball.vx * dt;
+  ball.y += ball.vy * dt;
+
+  for (const w of walls) collideWall(w);
+  for (const bp of bumpers) collideBumper(bp);
+  collideRocks();
+  collideBeam();
+  collideFlipper(flippers.left);
+  collideFlipper(flippers.right);
+  updateHoles(dt);
+}
+
+function launch() {
+  if (!inLane()) return;
+  if (ball.y < 790 - BR - 2 - 25) return;
+  ball.y = 790 - BR - 0.5;
+  ball.vy = -(1000 + 850 * plungerPower);
+  ball.vx = 0;
+  beep(180, 0.15, 'sawtooth', 0.05);
+}
+
+// ---------- 毎フレームの更新 ----------
+function update(dt) {
+  updateToast(dt);
+  updateFlipperHealth(dt);
+  if (state === 'play') updateBallLane(dt);
+  updateGull(dt);
+  updateRat(dt);
+  updateTuna(dt);
+  updateTownEvents(dt);
+
+  for (const p of popups) { p.t -= dt; p.y -= 30 * dt; }
+  for (let i = popups.length - 1; i >= 0; i--) if (popups[i].t <= 0) popups.splice(i, 1);
+  bumpers.forEach(b => { b.flash = Math.max(0, b.flash - dt); });
+  slings.forEach(s => { s.flash = Math.max(0, s.flash - dt); });
+  holes.forEach(h => { h.flash = Math.max(0, h.flash - dt); });
+
+  // 船はミカンの数を追いかけて進む
+  const target = Math.min(mikan, GOAL);
+  const moving = displayDist < target;
+  if (moving) displayDist = Math.min(target, displayDist + Math.max(12, (target - displayDist) * 2.5) * dt);
+  else if (displayDist > target) displayDist = Math.max(target, displayDist - Math.max(12, (displayDist - target) * 2.5) * dt);
+  sceneScroll += (moving ? 150 : 15) * dt;
+  if (introT > 0) {
+    introT -= dt;
+    if (introT <= 0) {
+      introT = 0;
+      townKey = '';
+      showToast('💨 突風で長万部まで飛ばされた！', 'ここは北海道…東京まで帰らなきゃ！');
+      missionT = MISSION_TIME;
+      jingle([392, 330, 262]);
+      setTimeout(() => jingle([523, 659, 784, 1047]), 900);
+    }
+  }
+  if (missionT > 0) missionT = Math.max(0, missionT - dt);
+  updateStrip(dt);
+  updateShipMarker();
+
+  if (state !== 'play') return;
+
+  if (plungerHeld && inLane()) plungerPower = Math.min(1, plungerPower + dt * 1.1);
+  if (testMode && tpAuto.checked) autoPlay();
+
+  if (clearPending && displayDist >= GOAL) {
+    endTimer += dt;
+    if (endTimer > 1.5) endGame('clear');
+    return;
+  }
+
+  if (ball) {
+    // 動かなくなったボールを救出
+    const sp = Math.hypot(ball.vx, ball.vy);
+    const holding = ball.y > 640 && (flippers.left.pressed || flippers.right.pressed);
+    if (!inLane() && !holding && sp < 15) {
+      stuckTimer += dt;
+      if (stuckTimer > 2) {
+        ball.vy = -450;
+        ball.vx = (Math.random() - 0.5) * 300;
+        stuckTimer = 0;
+      }
+    } else stuckTimer = 0;
+
+    // 落ちた
+    if (ball.y > H + 30) loseBall();
+  } else if (respawnTimer > 0) {
+    respawnTimer -= dt;
+    if (respawnTimer <= 0) {
+      if (balls > 0) spawnBall();
+      else if (!clearPending) endGame('over');
+    }
+  }
+}
+
+// ---------- 描画：台 ----------
+const bg = document.createElement('canvas');
+function buildBackground() {
+  bg.width = W; bg.height = H;
+  const g = bg.getContext('2d');
+
+  // 上は水色の空、下は海
+  const HORIZON = Math.round(H * 2 / 3);  // 海は下から1/3くらい
+  const sky = g.createLinearGradient(0, 0, 0, HORIZON);
+  sky.addColorStop(0, '#6cc8ff');
+  sky.addColorStop(1, '#e3f6ff');
+  g.fillStyle = sky;
+  g.fillRect(0, 0, W, HORIZON);
+  g.fillStyle = 'rgba(255,248,200,0.9)';
+  g.beginPath(); g.arc(115, 150, 22, 0, Math.PI * 2); g.fill();
+  g.fillStyle = 'rgba(255,255,255,0.9)';
+  for (const [cx, cy, s] of [[330, 110, 1], [120, 250, 0.8], [390, 270, 0.9], [230, 360, 0.7], [110, 470, 0.9], [360, 500, 0.8]]) {
+    g.beginPath();
+    g.ellipse(cx, cy, 34 * s, 11 * s, 0, 0, Math.PI * 2);
+    g.ellipse(cx + 20 * s, cy - 8 * s, 22 * s, 11 * s, 0, 0, Math.PI * 2);
+    g.ellipse(cx - 18 * s, cy - 4 * s, 16 * s, 9 * s, 0, 0, Math.PI * 2);
+    g.fill();
+  }
+
+  const sea = g.createLinearGradient(0, HORIZON, 0, H);
+  sea.addColorStop(0, '#5fd3f3');
+  sea.addColorStop(1, '#1e8fca');
+  g.fillStyle = sea;
+  g.fillRect(0, HORIZON, W, H - HORIZON);
+  g.fillStyle = 'rgba(255,255,255,0.7)';
+  g.fillRect(0, HORIZON, W, 2);
+
+  // 波
+  g.strokeStyle = 'rgba(255,255,255,0.35)';
+  g.lineWidth = 2;
+  for (let y = HORIZON + 22; y < H; y += 30) {
+    g.beginPath();
+    for (let x = 0; x <= W; x += 10) {
+      const yy = y + Math.sin((x + y) * 0.05) * 4;
+      x === 0 ? g.moveTo(x, yy) : g.lineTo(x, yy);
+    }
+    g.stroke();
+  }
+
+  // 台の外側を塗りつぶし（アーチの外の左上・右上は、ふちと同じオレンジ）
+  g.fillStyle = '#e8892b';
+  g.beginPath();
+  g.moveTo(0, 0); g.lineTo(W, 0); g.lineTo(W, ARC.y);
+  g.arc(ARC.x, ARC.y, ARC.r, 0, Math.PI, true);
+  g.lineTo(0, ARC.y); g.closePath();
+  g.fill();
+  // 左右の壁の外側の細いすき間もオレンジに
+  g.fillRect(0, ARC.y - 1, 20, H - ARC.y + 1);
+  g.fillRect(480, ARC.y - 1, W - 480, H - ARC.y + 1);
+
+  // 発射レーン
+  g.fillStyle = 'rgba(0,40,80,0.25)';
+  g.fillRect(LANE_X, 300, 480 - LANE_X, 520);
+
+  // 航路の矢印の飾り
+  g.fillStyle = 'rgba(255,255,255,0.4)';
+  for (let i = 0; i < 3; i++) {
+    const y = 640 - i * 22;
+    g.beginPath();
+    g.moveTo(250, y - 12); g.lineTo(262, y); g.lineTo(238, y);
+    g.closePath(); g.fill();
+  }
+
+  // 壁（明るい背景でも見えるように、こげ茶のふち＋オレンジ）
+  g.lineCap = 'round';
+  for (const [col, lw] of [['#6b3408', 6], ['#ffb347', 2.5]]) {
+    g.strokeStyle = col;
+    g.lineWidth = lw;
+    for (const w of walls) {
+      if (w.sling) continue;
+      g.beginPath(); g.moveTo(w.x1, w.y1); g.lineTo(w.x2, w.y2); g.stroke();
+    }
+  }
+}
+
+function drawMikan(c, x, y, r, glow = 0) {
+  c.save();
+  if (glow) { c.shadowColor = '#ffcc33'; c.shadowBlur = 20 * glow; }
+  const gr = c.createRadialGradient(x - r * 0.35, y - r * 0.35, r * 0.1, x, y, r);
+  gr.addColorStop(0, glow ? '#fff1a8' : '#ffc061');
+  gr.addColorStop(1, glow ? '#ff9a1f' : '#e8700f');
+  c.fillStyle = gr;
+  c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.fill();
+  c.restore();
+  // へた
+  c.fillStyle = '#3d7a2a';
+  c.beginPath(); c.arc(x, y - r * 0.85, r * 0.16, 0, Math.PI * 2); c.fill();
+  // 葉
+  c.fillStyle = '#4fa63a';
+  c.beginPath();
+  c.ellipse(x + r * 0.3, y - r * 0.95, r * 0.35, r * 0.15, -0.5, 0, Math.PI * 2);
+  c.fill();
+}
+
+// 球（銀色の鉄球。黒いふちで、どこにあってもはっきり見えるように）
+function drawBall() {
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.beginPath(); ctx.arc(ball.x + 2, ball.y + 3, BR, 0, Math.PI * 2); ctx.fill();
+    const g = ctx.createRadialGradient(ball.x - 3, ball.y - 3, 1, ball.x, ball.y, BR);
+    g.addColorStop(0, '#ffffff');
+    g.addColorStop(0.5, '#c9d2dc');
+    g.addColorStop(1, '#5d6b7a');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(ball.x, ball.y, BR, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#1a2533';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(ball.x - 3, ball.y - 3, 2.2, 0, Math.PI * 2); ctx.fill();
+}
+
+function drawTable() {
+  ctx.drawImage(bg, 0, 0);
+
+  // ミカンポイント（通るともらえる）
+  for (const h of holes) {
+    const ready = h.cool <= 0;
+    const color = isBallLane(h) ? '#e9eef4' : h.val >= 20 ? '#ffd23f' : h.val >= 8 ? '#ff9a3c' : h.val >= 5 ? '#f3c27a' : '#c9d6e3';
+    ctx.save();
+    ctx.globalAlpha = ready ? 1 : 0.35;
+    if (h.flash > 0) { ctx.shadowColor = '#fff3a0'; ctx.shadowBlur = 25; }
+    else if (ready) { ctx.shadowColor = color; ctx.shadowBlur = 8 + 6 * Math.sin(performance.now() / 250); }
+    ctx.strokeStyle = h.flash > 0 ? '#fff' : color;
+    ctx.lineWidth = 4;
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath(); ctx.arc(h.x, h.y, h.r + 4 + (h.flash > 0 ? 4 : 0), 0, Math.PI * 2); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(10,45,90,0.7)';
+    ctx.beginPath(); ctx.arc(h.x, h.y, h.r, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    if (isBallLane(h)) {
+      // 球の絵
+      const bg2 = ctx.createRadialGradient(h.x - 2, h.y - 2, 1, h.x, h.y, 7);
+      bg2.addColorStop(0, '#ffffff');
+      bg2.addColorStop(1, '#7d8b9a');
+      ctx.fillStyle = bg2;
+      ctx.beginPath(); ctx.arc(h.x, h.y, 7, 0, Math.PI * 2); ctx.fill();
+    } else {
+      ctx.fillText(h.val, h.x, h.y + 1);
+    }
+    ctx.textBaseline = 'alphabetic';
+    ctx.restore();
+  }
+
+  // スリングショット
+  for (const s of slings) {
+    ctx.fillStyle = s.flash > 0 ? '#ffe08a' : '#e8892b';
+    ctx.strokeStyle = '#fff3d6';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(...s.a); ctx.lineTo(...s.b); ctx.lineTo(...s.c); ctx.closePath();
+    ctx.fill(); ctx.stroke();
+  }
+
+  // バンパー（ミカンとまちがえないように、青いピンボールらしい形）
+  for (const b of bumpers) {
+    const hit = b.flash > 0;
+    ctx.save();
+    if (hit) { ctx.shadowColor = '#7fe3ff'; ctx.shadowBlur = 24; }
+    ctx.fillStyle = hit ? '#e8fbff' : '#0f2f55';
+    ctx.beginPath(); ctx.arc(b.x, b.y, b.r + 5, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+    const bg = ctx.createRadialGradient(b.x - 6, b.y - 6, 2, b.x, b.y, b.r);
+    bg.addColorStop(0, hit ? '#ffffff' : '#7cc7ff');
+    bg.addColorStop(1, hit ? '#5fd0ff' : '#1f6fc0');
+    ctx.fillStyle = bg;
+    ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(b.x, b.y, b.r - 6, 0, Math.PI * 2); ctx.stroke();
+    // 真ん中の星
+    ctx.fillStyle = hit ? '#1f6fc0' : '#ffffff';
+    ctx.beginPath();
+    for (let k = 0; k < 10; k++) {
+      const a = -Math.PI / 2 + k * Math.PI / 5, rr = k % 2 ? 4 : 9;
+      ctx.lineTo(b.x + Math.cos(a) * rr, b.y + Math.sin(a) * rr);
+    }
+    ctx.closePath(); ctx.fill();
+  }
+
+  // フリッパー
+  for (const f of [flippers.left, flippers.right]) {
+    // 付け根の円と先の円を、外側の接線でつないだしずく形
+    const k = flipperShape(f);
+    const a = Math.atan2(k.y1 - k.y0, k.x1 - k.x0);
+    const phi = Math.asin((k.r0 - k.r1) / Math.hypot(k.x1 - k.x0, k.y1 - k.y0));
+    const aA = a + Math.PI / 2 - phi, aB = a - Math.PI / 2 + phi;
+    ctx.beginPath();
+    ctx.moveTo(k.x0 + Math.cos(aA) * k.r0, k.y0 + Math.sin(aA) * k.r0);
+    ctx.lineTo(k.x1 + Math.cos(aA) * k.r1, k.y1 + Math.sin(aA) * k.r1);
+    ctx.arc(k.x1, k.y1, k.r1, aA, aB, true);
+    ctx.lineTo(k.x0 + Math.cos(aB) * k.r0, k.y0 + Math.sin(aB) * k.r0);
+    ctx.arc(k.x0, k.y0, k.r0, aB, aA, true);
+    ctx.closePath();
+    // 空振りが続くと白→オレンジ→赤。こわれている間は灰色
+    const heat = Math.min(1, flipperHeat(f));
+    ctx.fillStyle = f.brokenT > 0 ? '#8a8f96'
+      : `rgb(255, ${Math.round(246 - 150 * heat)}, ${Math.round(229 - 200 * heat)})`;
+    ctx.fill();
+    ctx.strokeStyle = '#6b3408';
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+    ctx.fillStyle = '#e8892b';
+    ctx.beginPath(); ctx.arc(k.x0, k.y0, 3, 0, Math.PI * 2); ctx.fill();
+    if (f.brokenT > 0) {
+      const mx = (k.x0 + k.x1) / 2, my = (k.y0 + k.y1) / 2;
+      for (let i = 0; i < 3; i++) {
+        const p = ((clock * 1.2) + i / 3) % 1;
+        ctx.fillStyle = `rgba(90, 90, 90, ${0.5 * (1 - p)})`;
+        ctx.beginPath(); ctx.arc(mx + Math.sin(p * 6 + i) * 6, my - 10 - p * 40, 5 + p * 8, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.font = 'bold 13px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = '#fff';
+      ctx.strokeText(`こわれ中 ${f.brokenT.toFixed(1)}`, mx, my + 28);
+      ctx.fillStyle = '#c0392b';
+      ctx.fillText(`こわれ中 ${f.brokenT.toFixed(1)}`, mx, my + 28);
+    }
+  }
+
+  // プランジャー
+  const py = 790 + plungerPower * 20;
+  ctx.fillStyle = '#c94f1a';
+  ctx.fillRect(452, py, 24, 815 - py);
+  ctx.fillStyle = '#ffb347';
+  ctx.fillRect(452, py, 24, 5);
+  if (plungerHeld && inLane()) {
+    ctx.fillStyle = 'rgba(255,179,71,0.8)';
+    ctx.fillRect(452, 700 - plungerPower * 80, 24, plungerPower * 80);
+  }
+
+  drawTownEventsUnder();
+
+  if (ball) drawBall();
+
+  drawGull();
+  drawRat();
+  drawTuna();
+  drawTownEventsOver();
+
+  // ポップアップ
+  ctx.textAlign = 'center';
+  for (const p of popups) {
+    ctx.globalAlpha = clamp(p.t, 0, 1);
+    ctx.font = `bold ${p.big ? 22 : 15}px sans-serif`;
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = '#5a2d00';
+    ctx.strokeText(p.text, p.x, p.y);
+    ctx.fillStyle = p.big ? '#ffe14d' : '#fff';
+    ctx.fillText(p.text, p.x, p.y);
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ---------- 描画：景色 ----------
+const SH = 500;      // 景色の高さ（この高さを基準に描く）
+let SW = 800;        // 景色の横幅（枠の形に合わせて変わる）
+let TOWN_X = 420;    // 町に着いたときの名所の位置
+let TOWN_SPAN = 760; // 町と町の間の画面上の距離
+
+function resizeScene() {
+  const r = scene.parentElement.getBoundingClientRect();
+  if (!r.width || !r.height) return;
+  const dpr = window.devicePixelRatio || 1;
+  scene.width = Math.round(r.width * dpr);
+  scene.height = Math.round(r.height * dpr);
+  const k = scene.height / SH;
+  sctx.setTransform(k, 0, 0, k, 0, 0);
+  SW = scene.width / k;
+  TOWN_X = Math.max(420, SW * 0.5);
+  TOWN_SPAN = Math.max(760, SW * 0.8);
+}
+// 下の説明の長さなどで枠の大きさが変わっても、絵がゆがまないように合わせ直す
+if (window.ResizeObserver) new ResizeObserver(resizeScene).observe(scene.parentElement);
+
+function rnd(i) {
+  const s = Math.sin(i * 127.1 + 311.7) * 43758.5453;
+  return s - Math.floor(s);
+}
+function layer(speed, spacing, fn) {
+  const off = sceneScroll * speed;
+  const start = Math.floor(off / spacing) - 1;
+  const count = Math.ceil(SW / spacing) + 3;
+  for (let i = start; i < start + count; i++) fn(i * spacing - off, i);
+}
+
+function currentSegment() {
+  let i = 0;
+  while (i < ROUTE.length - 1 && displayDist >= ROUTE[i + 1].d) i++;
+  return i;
+}
+function segmentFrac(i) {
+  if (i >= ROUTE.length - 1) return 0;
+  return (displayDist - ROUTE[i].d) / (ROUTE[i + 1].d - ROUTE[i].d);
+}
+
+// ----- 景色用の小さな部品 -----
+const now = () => performance.now() / 1000;
+
+function box(x, y, w, h, col) { sctx.fillStyle = col; sctx.fillRect(x, y, w, h); }
+function poly(col, ...p) {
+  sctx.fillStyle = col;
+  sctx.beginPath();
+  sctx.moveTo(p[0], p[1]);
+  for (let i = 2; i < p.length; i += 2) sctx.lineTo(p[i], p[i + 1]);
+  sctx.closePath();
+  sctx.fill();
+}
+function circle(x, y, r, col) { sctx.fillStyle = col; sctx.beginPath(); sctx.arc(x, y, r, 0, Math.PI * 2); sctx.fill(); }
+function hill(x, gy, w, h, col) { sctx.fillStyle = col; sctx.beginPath(); sctx.ellipse(x, gy, w, h, 0, Math.PI, 0); sctx.fill(); }
+function line(x1, y1, x2, y2, col, w = 2) {
+  sctx.strokeStyle = col; sctx.lineWidth = w;
+  sctx.beginPath(); sctx.moveTo(x1, y1); sctx.lineTo(x2, y2); sctx.stroke();
+}
+function curve(x1, y1, cx, cy, x2, y2, col, w) {
+  sctx.strokeStyle = col; sctx.lineWidth = w;
+  sctx.beginPath(); sctx.moveTo(x1, y1); sctx.quadraticCurveTo(cx, cy, x2, y2); sctx.stroke();
+}
+function windows(x, y, w, h, col = 'rgba(255,250,200,0.8)', step = 14) {
+  sctx.fillStyle = col;
+  for (let yy = y + 8; yy < y + h - 10; yy += step)
+    for (let xx = x + 6; xx < x + w - 8; xx += step) sctx.fillRect(xx, yy, 6, 7);
+}
+function txt(x, y, str, col, size = 14) {
+  sctx.font = `bold ${size}px sans-serif`;
+  sctx.fillStyle = col;
+  sctx.textAlign = 'center';
+  sctx.textBaseline = 'middle';
+  sctx.fillText(str, x, y);
+  sctx.textBaseline = 'alphabetic';
+}
+function label(x, y, str) {
+  sctx.font = 'bold 15px sans-serif';
+  const w = sctx.measureText(str).width + 16;
+  sctx.fillStyle = 'rgba(255,255,255,0.9)';
+  sctx.beginPath();
+  if (sctx.roundRect) sctx.roundRect(x - w / 2, y - 12, w, 24, 8);
+  else sctx.rect(x - w / 2, y - 12, w, 24);
+  sctx.fill();
+  txt(x, y + 1, str, '#4a2a08', 15);
+}
+function tree(x, gy, r, col = '#4f8f3a') {
+  box(x - 3, gy - r * 1.3, 6, r * 1.3, '#6b4a2b');
+  circle(x, gy - r * 1.6, r, col);
+  circle(x - r * 0.7, gy - r * 1.2, r * 0.7, col);
+  circle(x + r * 0.7, gy - r * 1.2, r * 0.7, col);
+}
+function pine(x, gy, s = 1) {
+  box(x - 2 * s, gy - 30 * s, 4 * s, 30 * s, '#5a3d24');
+  sctx.fillStyle = '#2f5a35';
+  for (let k = 0; k < 3; k++) {
+    sctx.beginPath();
+    sctx.ellipse(x + (k - 1) * 8 * s, gy - (30 + k * 9) * s, 16 * s, 6 * s, 0, 0, Math.PI * 2);
+    sctx.fill();
+  }
+}
+function house(x, gy, w, h, wall, roof) {
+  box(x, gy - h, w, h, wall);
+  poly(roof, x - 6, gy - h, x + w / 2, gy - h - h * 0.6, x + w + 6, gy - h);
+  box(x + w * 0.15, gy - h * 0.7, w * 0.25, h * 0.3, '#bfe3ff');
+  box(x + w * 0.6, gy - h * 0.55, w * 0.22, h * 0.55, '#7a5236');
+}
+function train(x, y, cars, body, stripe) {
+  for (let i = 0; i < cars; i++) {
+    const cx = x + i * 84;
+    box(cx, y - 28, 80, 28, body);
+    box(cx, y - 11, 80, 5, stripe);
+    for (let k = 0; k < 4; k++) box(cx + 8 + k * 18, y - 24, 12, 9, '#cfe8ff');
+  }
+}
+function boat(x, y, hull, flags) {
+  poly(hull, x - 50, y - 6, x + 55, y - 6, x + 42, y + 14, x - 40, y + 14);
+  box(x - 12, y - 30, 32, 24, '#f4f4f4');
+  box(x - 7, y - 26, 9, 8, '#5fa8e8');
+  box(x + 30, y - 62, 3, 56, '#555');
+  if (flags) flags.forEach((col, i) => {
+    const fy = y - 60 + i * 13, wav = Math.sin(now() * 3 + i) * 3;
+    poly(col, x + 33, fy, x + 62, fy + 2 + wav, x + 62, fy + 12 + wav, x + 33, fy + 11);
+  });
+}
+function gull(x, y, s = 1) {
+  const f = Math.sin(now() * 6 + x * 0.1) * 3 * s;
+  sctx.strokeStyle = '#334'; sctx.lineWidth = 2;
+  sctx.beginPath();
+  sctx.moveTo(x - 9 * s, y - f);
+  sctx.quadraticCurveTo(x - 4 * s, y - 6 * s, x, y);
+  sctx.quadraticCurveTo(x + 4 * s, y - 6 * s, x + 9 * s, y - f);
+  sctx.stroke();
+}
+function swan(x, y) {
+  sctx.fillStyle = '#fff';
+  sctx.beginPath(); sctx.ellipse(x, y, 30, 13, 0, 0, Math.PI * 2); sctx.fill();
+  curve(x + 18, y - 4, x + 36, y - 20, x + 24, y - 38, '#fff', 8);
+  circle(x + 24, y - 40, 7, '#fff');
+  poly('#ff8c1a', x + 29, y - 42, x + 38, y - 38, x + 29, y - 37);
+  box(x - 20, y - 26, 26, 14, '#ffd27a');
+}
+function yakata(x, y) {
+  poly('#6b3b1f', x - 70, y - 8, x + 75, y - 8, x + 60, y + 12, x - 60, y + 12);
+  box(x - 55, y - 36, 110, 28, '#f6ecd6');
+  poly('#5a3a28', x - 62, y - 36, x + 62, y - 36, x + 52, y - 46, x - 52, y - 46);
+  for (let k = -45; k <= 45; k += 18) circle(x + k, y - 30, 5, '#e74c3c');
+}
+function castle(x, y) {
+  poly('#9a958c', x - 45, y, x + 45, y, x + 36, y - 22, x - 36, y - 22);
+  [[34, 26], [26, 22], [18, 18]].reduce((top, [hw, h]) => {
+    box(x - hw * 0.8, top - h, hw * 1.6, h, '#f7f5ef');
+    poly('#3c4650', x - hw - 8, top - h, x + hw + 8, top - h, x + hw * 0.5, top - h - 12, x - hw * 0.5, top - h - 12);
+    return top - h - 12;
+  }, y - 22);
+}
+function torii(x, y) {
+  box(x - 26, y - 70, 8, 70, '#c0392b');
+  box(x + 18, y - 70, 8, 70, '#c0392b');
+  box(x - 30, y - 56, 60, 6, '#c0392b');
+  box(x - 38, y - 76, 76, 9, '#c0392b');
+  box(x - 42, y - 82, 84, 6, '#2b2b2b');
+}
+function crab(x, y) {
+  sctx.strokeStyle = '#d9381e'; sctx.lineWidth = 5;
+  for (const s of [-1, 1]) {
+    for (let k = 0; k < 3; k++) {
+      sctx.beginPath();
+      sctx.moveTo(x + s * 18, y + k * 7);
+      sctx.lineTo(x + s * 38, y + k * 9 - 4);
+      sctx.lineTo(x + s * 44, y + k * 9 + 8);
+      sctx.stroke();
+    }
+    line(x + s * 14, y - 8, x + s * 28, y - 26, '#d9381e', 5);
+    circle(x + s * 31, y - 31, 9, '#e8452c');
+  }
+  sctx.fillStyle = '#e8452c';
+  sctx.beginPath(); sctx.ellipse(x, y + 4, 26, 17, 0, 0, Math.PI * 2); sctx.fill();
+  circle(x - 7, y - 12, 4, '#fff'); circle(x + 7, y - 12, 4, '#fff');
+  circle(x - 7, y - 12, 2, '#222'); circle(x + 7, y - 12, 2, '#222');
+}
+
+// ----- 町ごとの名所（x = 中心、gy = 水面の高さ） -----
+const LANDMARKS = {
+  '井の頭公園'(x, gy) {
+    for (let k = -3; k <= 3; k++) tree(x + k * 88, gy - 18, 26, k % 2 ? '#f7c1d3' : '#f3a9c2');
+    box(x - 150, gy + 14, 300, 9, '#8a5a3a');
+    box(x - 150, gy - 2, 300, 3, '#8a5a3a');
+    for (let k = -150; k <= 150; k += 30) box(x + k - 2, gy - 2, 4, 20, '#8a5a3a');
+    swan(x - 80, gy + 60);
+    swan(x + 120, gy + 72);
+    label(x, gy - 110, '井の頭池');
+  },
+  '永福町'(x, gy) {
+    box(x - 330, gy - 120, 660, 8, '#8d8d8d');
+    for (let k = -300; k <= 300; k += 100) box(x + k - 5, gy - 112, 10, 92, '#9a9a9a');
+    train(x - 170, gy - 120, 4, '#f2f2f2', '#2bb3c0');
+    label(x, gy - 170, '京王井の頭線');
+    [-290, -200, -110, 30, 120, 210].forEach((dx, i) =>
+      house(x + dx, gy - 22, 62, 46, ['#f3e3c3', '#e9d2b0', '#fff', '#dfe7d0'][i % 4], ['#b5452b', '#4a6fa5', '#6b4a2b'][i % 3]));
+    tree(x - 25, gy - 22, 22);
+    tree(x + 300, gy - 22, 22);
+  },
+  '中野'(x, gy) {
+    box(x - 320, gy - 130, 80, 108, '#a7b1bd'); windows(x - 320, gy - 130, 80, 108);
+    box(x - 225, gy - 90, 70, 68, '#b9c0c9'); windows(x - 225, gy - 90, 70, 68);
+    // 中野サンプラザ（三角の建物）
+    poly('#f1ede4', x - 100, gy - 22, x - 100, gy - 270, x - 68, gy - 280, x + 80, gy - 22);
+    sctx.strokeStyle = 'rgba(110,125,150,0.55)'; sctx.lineWidth = 2;
+    for (let yy = gy - 260; yy < gy - 30; yy += 14) {
+      const xr = x - 68 + (yy - (gy - 280)) * (148 / 258);
+      line(x - 96, yy, xr - 4, yy, 'rgba(110,125,150,0.55)', 2);
+    }
+    label(x - 40, gy - 300, '中野サンプラザ');
+    // 中野ブロードウェイ
+    box(x + 110, gy - 152, 150, 130, '#cdb894'); windows(x + 110, gy - 120, 150, 98);
+    box(x + 120, gy - 144, 130, 22, '#d0342c');
+    txt(x + 185, gy - 133, 'BROADWAY', '#fff', 14);
+    label(x + 185, gy - 172, '中野ブロードウェイ');
+  },
+  '高田馬場'(x, gy) {
+    box(x - 320, gy - 150, 90, 128, '#a7b1bd'); windows(x - 320, gy - 150, 90, 128);
+    box(x - 210, gy - 110, 80, 88, '#bcc4cd'); windows(x - 210, gy - 110, 80, 88);
+    box(x + 70, gy - 210, 120, 188, '#a8432c'); windows(x + 70, gy - 170, 120, 148);
+    box(x + 82, gy - 200, 96, 26, '#fff');
+    txt(x + 130, gy - 187, 'BIG BOX', '#c0392b', 16);
+    box(x + 220, gy - 130, 90, 108, '#9aa6b5'); windows(x + 220, gy - 130, 90, 108);
+    // 山手線の鉄橋
+    box(x - 340, gy - 62, 680, 12, '#5a5a5a');
+    for (let k = -320; k <= 320; k += 160) box(x + k - 6, gy - 50, 12, 30, '#6a6a6a');
+    train(x - 260, gy - 62, 5, '#d0d0d0', '#9acd32');
+    for (let k = -340; k < 340; k += 40) line(x + k, gy - 62, x + k + 40, gy - 100, '#4a4a4a', 3);
+    box(x - 340, gy - 102, 680, 5, '#4a4a4a');
+    label(x - 120, gy - 125, '山手線');
+  },
+  '飯田橋'(x, gy) {
+    // 東京理科大学の校舎
+    box(x - 250, gy - 190, 110, 110, '#c9ced6'); windows(x - 250, gy - 190, 110, 110, '#7f9fc0', 16);
+    box(x - 110, gy - 290, 200, 210, '#8fa9c4'); windows(x - 110, gy - 290, 200, 210, '#d8ecff', 18);
+    box(x - 110, gy - 296, 200, 8, '#6f87a3');
+    box(x + 110, gy - 210, 130, 130, '#b7c2cf'); windows(x + 110, gy - 210, 130, 130, '#7f9fc0', 16);
+    box(x - 86, gy - 276, 152, 26, '#fff');
+    txt(x - 10, gy - 263, '東京理科大学', '#1f3f7a', 17);
+    box(x - 340, gy - 80, 680, 60, '#9b958a');
+    for (let r = 0; r < 5; r++) {
+      const yy = gy - 80 + r * 12;
+      line(x - 340, yy, x + 340, yy, 'rgba(60,55,50,0.4)', 1);
+      for (let k = -340 + (r % 2) * 18; k < 340; k += 36) line(x + k, yy, x + k, yy + 12, 'rgba(60,55,50,0.4)', 1);
+    }
+    for (let k = -3; k <= 3; k++) tree(x + k * 95, gy - 80, 24, '#f6bdd0');
+    box(x + 70, gy - 8, 200, 10, '#a07850');
+    for (const ux of [100, 170, 240]) {
+      box(x + ux - 1, gy - 40, 3, 32, '#666');
+      poly('#fff', x + ux - 26, gy - 36, x + ux, gy - 52, x + ux + 26, gy - 36);
+    }
+    poly('#c97b3a', x - 170, gy + 34, x - 90, gy + 34, x - 100, gy + 48, x - 160, gy + 48);
+    label(x + 290, gy - 100, '外堀');
+    // ゴールの横断幕（出航の演出のときは出さない）
+    if (introT > 0) return;
+    box(x - 300, gy - 150, 6, 70, '#555');
+    box(x + 294, gy - 150, 6, 70, '#555');
+    const sag = Math.sin(now() * 2) * 2;
+    poly('#e8452c', x - 294, gy - 150, x + 294, gy - 150, x + 294, gy - 118 + sag, x - 294, gy - 118 + sag);
+    txt(x, gy - 133 + sag / 2, 'ゴール！ おかえり みかん丸', '#fff', 18);
+  },
+  '御茶ノ水'(x, gy) {
+    poly('#4f7f3f', x - 340, gy - 20, x - 340, gy - 140, x + 340, gy - 140, x + 340, gy - 20);
+    for (let k = -340; k <= 340; k += 40) circle(x + k, gy - 140, 22, '#5d9447');
+    // ニコライ堂
+    box(x - 290, gy - 240, 76, 100, '#e0d2b4'); windows(x - 290, gy - 230, 76, 90, '#8a7a5a', 16);
+    sctx.fillStyle = '#5f9e8f';
+    sctx.beginPath(); sctx.arc(x - 252, gy - 240, 34, Math.PI, 0); sctx.fill();
+    box(x - 254, gy - 300, 4, 26, '#c9a227'); box(x - 262, gy - 292, 20, 4, '#c9a227');
+    label(x - 252, gy - 318, 'ニコライ堂');
+    // 丸ノ内線
+    box(x - 100, gy - 100, 30, 48, '#2f3a2a');
+    box(x - 70, gy - 52, 360, 7, '#666');
+    train(x - 40, gy - 52, 3, '#e60012', '#fff');
+    // 聖橋
+    curve(x - 120, gy - 30, x, gy - 290, x + 120, gy - 30, '#d9d3c6', 16);
+    curve(x - 250, gy - 80, x - 185, gy - 230, x - 120, gy - 30, '#d9d3c6', 12);
+    curve(x + 120, gy - 30, x + 185, gy - 230, x + 250, gy - 80, '#d9d3c6', 12);
+    for (let k = -230; k <= 230; k += 26) {
+      if (Math.abs(k) < 40) continue;
+      box(x + k - 3, gy - 160, 6, Math.abs(k) < 120 ? 40 + Math.abs(k) * 0.6 : 50, '#cfc8b8');
+    }
+    box(x - 260, gy - 172, 520, 16, '#e3ddd0');
+    box(x - 260, gy - 180, 520, 4, '#bdb6a6');
+    label(x, gy - 205, '聖橋');
+  },
+  '秋葉原'(x, gy) {
+    [[-330, 90, 240, '#55606e', '電気', '#ffd400'], [-230, 80, 200, '#6d5a7a', 'アニメ', '#ff4fa0'],
+     [-140, 100, 260, '#4a5866', 'ゲーム', '#29c4ff'], [200, 100, 230, '#58646f', 'ホビー', '#7cff6a'],
+     [310, 80, 180, '#6f5a6d', 'カード', '#ff6fb7']].forEach(([dx, w, h, col, sign, sc]) => {
+      box(x + dx, gy - 22 - h, w, h, col);
+      windows(x + dx, gy - 22 - h, w - 26, h);
+      const sh = sign.length * 22 + 10;
+      sctx.save();
+      sctx.shadowColor = sc; sctx.shadowBlur = 12;
+      box(x + dx + w - 26, gy - h, 22, sh, sc);
+      sctx.restore();
+      [...sign].forEach((ch, k) => txt(x + dx + w - 15, gy - h + 16 + k * 22, ch, '#222', 15));
+    });
+    // 万世橋高架橋（レンガ）
+    box(x - 70, gy - 100, 260, 80, '#a5532f');
+    for (let r = 1; r < 8; r++) line(x - 70, gy - 100 + r * 10, x + 190, gy - 100 + r * 10, 'rgba(70,30,15,0.35)', 1);
+    for (let k = 0; k < 4; k++) {
+      const ox = x - 55 + k * 62;
+      sctx.fillStyle = '#4a2414';
+      sctx.beginPath();
+      sctx.moveTo(ox, gy - 20); sctx.lineTo(ox, gy - 58);
+      sctx.arc(ox + 21, gy - 58, 21, Math.PI, 0);
+      sctx.lineTo(ox + 42, gy - 20); sctx.closePath(); sctx.fill();
+    }
+    train(x - 65, gy - 100, 3, '#f15a22', '#fff');
+    label(x + 60, gy - 150, '万世橋');
+  },
+  '浅草橋'(x, gy) {
+    // スカイツリー
+    poly('#c9d6e6', x + 218, gy - 22, x + 237, gy - 270, x + 243, gy - 270, x + 262, gy - 22);
+    box(x + 225, gy - 190, 30, 14, '#aebfd3');
+    box(x + 231, gy - 240, 18, 10, '#aebfd3');
+    box(x + 238, gy - 300, 4, 32, '#aebfd3');
+    label(x + 240, gy - 312, 'スカイツリー');
+    // 人形のお店
+    box(x - 320, gy - 112, 130, 90, '#e9d9b8'); windows(x - 320, gy - 80, 130, 58, '#9ad', 18);
+    box(x - 308, gy - 104, 106, 24, '#b5452b');
+    txt(x - 255, gy - 92, '人形', '#fff', 16);
+    // 柳橋
+    box(x - 170, gy - 28, 230, 10, '#3c8a5a');
+    curve(x - 170, gy - 28, x - 55, gy - 150, x + 60, gy - 28, '#3c8a5a', 8);
+    for (let k = -140; k <= 30; k += 28) {
+      const t = (k + 170) / 230, ay = (1 - t) * (1 - t) * (gy - 28) + 2 * (1 - t) * t * (gy - 150) + t * t * (gy - 28);
+      line(x + k, ay, x + k, gy - 28, '#3c8a5a', 3);
+    }
+    label(x - 55, gy - 110, '柳橋');
+    yakata(x - 60, gy + 42);
+    yakata(x + 150, gy + 58);
+  },
+  '竹芝'(x, gy) {
+    // 東京タワー
+    poly('#e8452c', x - 240, gy - 20, x - 199, gy - 245, x - 187, gy - 245, x - 146, gy - 20);
+    for (const fr of [0.2, 0.45, 0.7]) {
+      const y = gy - 20 - 225 * fr, l = x - 240 + 41 * fr, r = x - 146 - 41 * fr;
+      box(l, y, r - l, 8, '#fff');
+    }
+    box(x - 210, gy - 150, 34, 16, '#f4f4f4');
+    box(x - 204, gy - 210, 22, 10, '#f4f4f4');
+    box(x - 195, gy - 290, 4, 46, '#e8452c');
+    label(x - 193, gy - 305, '東京タワー');
+    // レインボーブリッジ
+    box(x - 80, gy - 62, 470, 10, '#eee');
+    for (let k = -60; k <= 380; k += 70) box(x + k, gy - 52, 8, 52, '#ddd');
+    box(x + 30, gy - 210, 16, 200, '#f4f4f4');
+    box(x + 260, gy - 210, 16, 200, '#f4f4f4');
+    sctx.strokeStyle = '#fff'; sctx.lineWidth = 3;
+    sctx.beginPath();
+    sctx.moveTo(x - 80, gy - 62);
+    sctx.quadraticCurveTo(x - 20, gy - 120, x + 38, gy - 210);
+    sctx.quadraticCurveTo(x + 153, gy - 10, x + 268, gy - 210);
+    sctx.quadraticCurveTo(x + 330, gy - 120, x + 390, gy - 62);
+    sctx.stroke();
+    for (let k = 60; k < 250; k += 20) {
+      const t = (k - 38) / 230, cy = (1 - t) * (1 - t) * (gy - 210) + 2 * (1 - t) * t * (gy - 10) + t * t * (gy - 210);
+      line(x + k, cy, x + k, gy - 62, 'rgba(255,255,255,0.8)', 1.5);
+    }
+    label(x + 153, gy - 235, 'レインボーブリッジ');
+    box(x - 340, gy - 12, 230, 14, '#9a9a9a');
+  },
+  '館山'(x, gy) {
+    hill(x - 190, gy, 170, 70, '#6fab5a');
+    hill(x + 70, gy, 270, 150, '#5f9a4e');
+    box(x - 340, gy - 8, 680, 12, '#ead9a7');
+    for (let k = -2; k <= 2; k++) tree(x + 70 + k * 70, gy - 40 - (2 - Math.abs(k)) * 30, 18, '#4a8a3c');
+    castle(x + 70, gy - 145);
+    label(x + 70, gy - 260, '館山城');
+  },
+  '銚子'(x, gy) {
+    poly('#6f6150', x - 60, gy + 5, x - 40, gy - 100, x + 330, gy - 112, x + 345, gy + 5);
+    box(x - 42, gy - 114, 374, 14, '#5f9a4e');
+    // 犬吠埼灯台
+    poly('#fafafa', x + 100, gy - 110, x + 108, gy - 255, x + 128, gy - 255, x + 136, gy - 110);
+    box(x + 104, gy - 280, 28, 25, '#333');
+    circle(x + 118, gy - 268, 8, '#fff59d');
+    poly('#222', x + 100, gy - 280, x + 118, gy - 296, x + 136, gy - 280);
+    const sw = Math.sin(now() * 1.2) * 60;
+    poly('rgba(255,250,180,0.3)', x + 118, gy - 268, x - 120, gy - 330 + sw, x - 120, gy - 230 + sw);
+    label(x + 118, gy - 318, '犬吠埼灯台');
+    boat(x - 200, gy + 42, '#2b5fa8');
+    boat(x - 330, gy + 30, '#c0392b');
+  },
+  '大洗'(x, gy) {
+    hill(x - 40, gy, 300, 40, '#6f9a6a');
+    // 神磯の鳥居
+    poly('#555a5f', x - 270, gy + 34, x - 250, gy - 8, x - 205, gy - 20, x - 160, gy - 4, x - 140, gy + 34);
+    torii(x - 205, gy - 18);
+    for (let k = 0; k < 5; k++) {
+      const t = (now() * 1.5 + k * 0.4) % 2;
+      if (t < 1) circle(x - 280 + k * 35, gy + 26 - t * 18, 6 * (1 - t) + 2, 'rgba(255,255,255,0.8)');
+    }
+    label(x - 205, gy - 125, '神磯の鳥居');
+    // 北海道行きのフェリー
+    const fx = x + 130, fy = gy + 30;
+    poly('#ffffff', fx - 190, fy - 30, fx + 170, fy - 30, fx + 200, fy - 50, fx + 175, fy + 18, fx - 180, fy + 18);
+    box(fx - 185, fy - 6, 360, 8, '#1f5fa8');
+    box(fx - 150, fy - 70, 260, 40, '#f4f4f4'); windows(fx - 150, fy - 70, 260, 40, '#5fa8e8', 16);
+    box(fx - 110, fy - 95, 160, 25, '#f4f4f4'); windows(fx - 110, fy - 95, 160, 25, '#5fa8e8', 16);
+    box(fx - 60, fy - 125, 26, 30, '#1f5fa8');
+    circle(fx + 130, fy - 30, 14, '#ff9a1f');
+    label(fx, fy - 150, '北海道行きフェリー');
+  },
+  '石巻'(x, gy) {
+    hill(x - 220, gy, 220, 90, '#5f8f4e');
+    box(x - 330, gy - 60, 120, 48, '#c9c2b0'); windows(x - 330, gy - 60, 120, 48, '#8899aa', 16);
+    sctx.fillStyle = '#8fbf6a';
+    sctx.beginPath(); sctx.ellipse(x + 50, gy + 4, 200, 24, 0, Math.PI, 0); sctx.fill();
+    // 石ノ森萬画館
+    box(x - 10, gy - 30, 10, 20, '#ccc'); box(x + 100, gy - 30, 10, 20, '#ccc');
+    sctx.fillStyle = '#f4f6f8';
+    sctx.beginPath(); sctx.ellipse(x + 50, gy - 50, 115, 34, 0, 0, Math.PI * 2); sctx.fill();
+    sctx.fillStyle = '#dfe5ec';
+    sctx.beginPath(); sctx.ellipse(x + 50, gy - 76, 58, 34, 0, Math.PI, 0); sctx.fill();
+    box(x - 45, gy - 56, 190, 9, '#7fb2d9');
+    label(x + 50, gy - 140, '石ノ森萬画館');
+  },
+  '気仙沼'(x, gy) {
+    hill(x, gy - 10, 380, 130, '#4f7f3f');
+    box(x - 340, gy - 16, 680, 18, '#a8a8a8');
+    box(x - 310, gy - 84, 190, 68, '#e3e0d8');
+    poly('#7d8790', x - 318, gy - 84, x - 215, gy - 108, x - 112, gy - 84);
+    txt(x - 215, gy - 55, '魚市場', '#1f4f8f', 18);
+    boat(x - 40, gy + 40, '#1f4f8f', ['#e74c3c', '#f1c40f', '#2ecc71']);
+    boat(x + 130, gy + 54, '#c0392b', ['#3498db', '#f1c40f', '#e74c3c']);
+    boat(x + 290, gy + 36, '#27715a', ['#f1c40f', '#e74c3c', '#9b59b6']);
+    label(x + 130, gy - 40, '大漁旗の漁船');
+  },
+  '大船渡'(x, gy) {
+    hill(x + 200, gy, 200, 70, '#5f8f4e');
+    // 碁石海岸の岩
+    poly('#7a6f62', x - 300, gy + 30, x - 290, gy - 70, x - 230, gy - 90, x - 170, gy - 60, x - 160, gy + 30);
+    sctx.fillStyle = '#2f7fc0';
+    sctx.beginPath(); sctx.ellipse(x - 228, gy + 6, 24, 30, 0, 0, Math.PI * 2); sctx.fill();
+    poly('#857a6c', x - 130, gy + 30, x - 120, gy - 120, x - 80, gy - 130, x - 60, gy + 30);
+    poly('#6e6458', x - 30, gy + 30, x - 20, gy - 50, x + 20, gy - 60, x + 30, gy + 30);
+    pine(x - 250, gy - 86, 1.1); pine(x - 200, gy - 82); pine(x - 95, gy - 126, 1.2); pine(x, gy - 56);
+    label(x - 150, gy - 175, '碁石海岸');
+    // サンマ船
+    boat(x + 200, gy + 50, '#e8e8e8');
+    for (let k = 0; k < 6; k++) {
+      line(x + 150 + k * 20, gy + 44, x + 150 + k * 20, gy - 10, '#666', 2);
+      circle(x + 150 + k * 20, gy - 12, 5, '#fff7a0');
+    }
+    label(x + 200, gy - 40, 'サンマ船');
+  },
+  '釜石'(x, gy) {
+    // 製鉄所
+    box(x - 330, gy - 90, 230, 72, '#7d7f85');
+    box(x - 300, gy - 210, 20, 120, '#8d8f95'); box(x - 300, gy - 210, 20, 12, '#c0392b');
+    box(x - 240, gy - 185, 20, 95, '#8d8f95'); box(x - 240, gy - 185, 20, 12, '#c0392b');
+    for (let k = 0; k < 4; k++) {
+      const t = (now() * 0.4 + k * 0.25) % 1;
+      circle(x - 290 + t * 60, gy - 220 - t * 80, 10 + t * 16, `rgba(230,230,230,${0.7 * (1 - t)})`);
+    }
+    label(x - 215, gy - 60, '鉄の町');
+    // 釜石大観音
+    hill(x + 140, gy, 250, 135, '#5f8f4e');
+    poly('#ffffff', x + 112, gy - 128, x + 122, gy - 240, x + 158, gy - 240, x + 168, gy - 128);
+    circle(x + 140, gy - 256, 17, '#fff');
+    circle(x + 140, gy - 276, 8, '#fff');
+    poly('#e6e6e6', x + 125, gy - 230, x + 140, gy - 200, x + 155, gy - 230);
+    label(x + 140, gy - 305, '釜石大観音');
+  },
+  '八戸'(x, gy) {
+    for (let k = 0; k < 3; k++) poly(['#e74c3c', '#3498db', '#f1c40f'][k], x - 320 + k * 60, gy - 10, x - 295 + k * 60, gy - 50, x - 270 + k * 60, gy - 10);
+    label(x - 260, gy - 70, '朝市');
+    // 蕪島
+    hill(x + 60, gy + 5, 180, 85, '#7da44f');
+    for (let i = 0; i < 50; i++) {
+      const a = Math.PI + rnd(i) * Math.PI, rr = Math.sqrt(rnd(i + 50)) * 0.9;
+      circle(x + 60 + Math.cos(a) * 180 * rr, gy + 5 + Math.sin(a) * 85 * rr, 4, '#ffe14d');
+    }
+    box(x + 35, gy - 112, 50, 32, '#c0392b');
+    poly('#3a3a3a', x + 25, gy - 112, x + 95, gy - 112, x + 80, gy - 128, x + 40, gy - 128);
+    for (let i = 0; i < 12; i++) {
+      const t = now();
+      gull(x + 60 + Math.cos(t * 0.6 + i) * (80 + rnd(i) * 130), gy - 170 + Math.sin(t * 1.1 + i * 2) * 50, 1.3);
+    }
+    label(x + 60, gy - 250, '蕪島（ウミネコの島）');
+  },
+  '函館'(x, gy) {
+    // 函館山とロープウェイ
+    poly('#3f6a46', x - 340, gy - 10, x - 240, gy - 170, x - 160, gy - 225, x - 70, gy - 165, x + 30, gy - 10);
+    line(x - 40, gy - 30, x - 158, gy - 218, '#333', 2);
+    const t = (Math.sin(now() * 0.5) + 1) / 2;
+    box(x - 40 - 118 * t - 8, gy - 30 - 188 * t, 16, 12, '#c0392b');
+    label(x - 160, gy - 250, '函館山');
+    // 赤レンガ倉庫
+    for (let k = 0; k < 3; k++) {
+      const wx = x + 50 + k * 88;
+      box(wx, gy - 72, 82, 58, '#a0472b');
+      poly('#7d8790', wx - 4, gy - 72, wx + 41, gy - 94, wx + 86, gy - 72);
+      for (let w = 0; w < 3; w++) {
+        sctx.fillStyle = '#4a1f12';
+        sctx.beginPath(); sctx.arc(wx + 16 + w * 25, gy - 42, 7, Math.PI, 0); sctx.fill();
+        box(wx + 9 + w * 25, gy - 42, 14, 14, '#4a1f12');
+      }
+    }
+    label(x + 180, gy - 115, '赤レンガ倉庫');
+    // 五稜郭タワー
+    box(x + 310, gy - 230, 14, 216, '#d9dde2');
+    poly('#c0c8d0', x + 292, gy - 230, x + 298, gy - 268, x + 336, gy - 268, x + 342, gy - 230);
+    box(x + 298, gy - 258, 38, 10, '#5fa8e8');
+    label(x + 317, gy - 290, '五稜郭タワー');
+  },
+  '長万部'(x, gy) {
+    // 内浦湾の向こうの駒ケ岳
+    poly('#8aa0b5', x - 340, gy - 4, x - 240, gy - 120, x - 215, gy - 100, x - 190, gy - 132, x - 90, gy - 4);
+    poly('#fff', x - 254, gy - 104, x - 240, gy - 120, x - 215, gy - 100, x - 190, gy - 132, x - 176, gy - 116, x - 215, gy - 92);
+    label(x - 215, gy - 155, '駒ケ岳');
+    box(x - 80, gy - 10, 440, 14, '#e8d9ab');
+    // 長万部駅
+    box(x + 10, gy - 82, 170, 72, '#f3ead8'); windows(x + 10, gy - 60, 170, 50, '#5fa8e8', 18);
+    poly('#7a4a2a', x, gy - 82, x + 95, gy - 112, x + 190, gy - 82);
+    box(x + 35, gy - 78, 120, 20, '#fff');
+    txt(x + 95, gy - 68, '長万部駅', '#222', 14);
+    // かにめしの看板
+    box(x + 268, gy - 150, 6, 140, '#555');
+    box(x + 200, gy - 250, 142, 104, '#fff8e0');
+    sctx.strokeStyle = '#d9381e'; sctx.lineWidth = 4;
+    sctx.strokeRect(x + 200, gy - 250, 142, 104);
+    crab(x + 271, gy - 205);
+    txt(x + 271, gy - 162, 'かにめし', '#d9381e', 20);
+    label(x + 150, gy - 285, 'スタート！');
+  },
+};
+
+function drawShip(x, y, s, rot = 0) {
+  const c = sctx;
+  c.save();
+  c.translate(x, y);
+  c.scale(s, s);
+  if (rot) { c.translate(0, -20); c.rotate(rot); c.translate(0, 20); }
+  box(-6, -30, 26, 16, '#fff');
+  box(-2, -27, 6, 6, '#5fa8e8'); box(8, -27, 6, 6, '#5fa8e8');
+  box(14, -44, 3, 14, '#333');
+  poly('#ff7b00', 17, -44, 30, -40, 17, -36);
+  for (let i = 0; i < 4; i++) drawMikan(c, -26 + i * 8, -18, 4);
+  poly('#b5541c', -40, -14, 45, -14, 34, 0, -32, 0);
+  txt(2, -7, 'みかん丸', '#fff', 9);
+  c.restore();
+}
+
+function drawScene() {
+  const c = sctx;
+  const si = currentSegment(), f = segmentFrac(si);
+  const intro = introT > 0;
+  const area = intro ? 'river' : ROUTE[si].area;
+  const gy = 330;  // 水面の高さ
+  const moving = displayDist < Math.min(mikan, GOAL);
+
+  // 空
+  const sky = c.createLinearGradient(0, 0, 0, gy);
+  if (area === 'north') { sky.addColorStop(0, '#9fc4e8'); sky.addColorStop(1, '#e6f2fb'); }
+  else { sky.addColorStop(0, '#5fa8e8'); sky.addColorStop(1, '#cfe9ff'); }
+  c.fillStyle = sky;
+  c.fillRect(0, 0, SW, gy);
+  circle(SW - 110, 80, 34, 'rgba(255,244,190,0.9)');
+
+  // 雲
+  c.fillStyle = 'rgba(255,255,255,0.85)';
+  layer(0.08, 260, (x, i) => {
+    const y = 50 + rnd(i) * 70;
+    c.beginPath();
+    c.ellipse(x, y, 48, 16, 0, 0, Math.PI * 2);
+    c.ellipse(x + 32, y - 10, 34, 16, 0, 0, Math.PI * 2);
+    c.fill();
+  });
+
+  // 遠くの景色
+  if (area === 'river') {
+    layer(0.25, 46, (x, i) => {
+      const bh = 50 + rnd(i) * 110;
+      box(x, gy - 22 - bh, 40, bh, ['#a9b4c2', '#b8c1cc', '#9aa6b5'][((i % 3) + 3) % 3]);
+    });
+    box(0, gy - 22, SW, 22, '#6b8f4e');
+    box(0, gy - 6, SW, 6, '#8b8378');
+  } else if (area === 'bay') {
+    layer(0.15, 26, (x, i) => box(x, gy - 20 - rnd(i) * 60, 22, 80, '#a7b4c4'));
+    layer(0.3, 300, x => {
+      line(x, gy, x, gy - 90, '#c0392b', 5);
+      line(x + 30, gy, x + 30, gy - 90, '#c0392b', 5);
+      line(x - 20, gy - 90, x + 90, gy - 90, '#c0392b', 5);
+    });
+  } else if (area === 'sea') {
+    layer(0.1, 420, (x, i) => { if (rnd(i) > 0.5) hill(x, gy, 70, 14 + rnd(i + 3) * 14, '#7fa58a'); });
+  } else {
+    layer(0.12, 230, (x, i) => {
+      const mh = 70 + rnd(i) * 60;
+      poly('#7d93a8', x - 120, gy, x, gy - mh, x + 120, gy);
+      poly('#fff', x - 28, gy - mh + 28 * mh / 120, x, gy - mh, x + 28, gy - mh + 28 * mh / 120);
+    });
+  }
+
+  // 水
+  const water = c.createLinearGradient(0, gy, 0, SH);
+  if (area === 'river') { water.addColorStop(0, '#4f8a8b'); water.addColorStop(1, '#2f5f66'); }
+  else { water.addColorStop(0, '#2f7fc0'); water.addColorStop(1, '#174a7a'); }
+  c.fillStyle = water;
+  c.fillRect(0, gy, SW, SH - gy);
+  layer(0.9, 60, (x, i) => {
+    const y = gy + 14 + ((i % 3) + 3) % 3 * 22;
+    curve(x, y, x + 12, y - 5, x + 24, y, 'rgba(255,255,255,0.3)', 2);
+  });
+
+  // 町の名所（前後の町も画面に入っていれば描く）
+  if (intro) {
+    c.save(); LANDMARKS['飯田橋'](TOWN_X, gy); c.restore();
+  } else {
+    for (let j = si - 1; j <= si + 2; j++) {
+      if (j < 0 || j >= ROUTE.length) continue;
+      const x = TOWN_X + (j - si - f) * TOWN_SPAN;
+      if (x < -420 || x > SW + 420) continue;
+      const fn = LANDMARKS[ROUTE[j].name];
+      if (fn) { c.save(); fn(x, gy); c.restore(); }
+    }
+  }
+
+  // みかん丸
+  const bob = Math.sin(performance.now() / 400) * 3;
+  const sy = gy + 110 + bob;
+  if (intro) {
+    // 少し進んだところで突風が吹いて、くるくる回りながら空へ飛んでいく
+    const p = 1 - introT / INTRO_TIME;
+    const q = Math.max(0, (p - 0.3) / 0.7);
+    if (q > 0) {
+      for (let i = 0; i < 8; i++) {
+        const wx = (SW + 200) - ((now() * 900 + i * 260) % (SW + 400));
+        line(wx, 60 + i * 50, wx + 120, 60 + i * 50, 'rgba(255,255,255,0.8)', 3);
+      }
+      txt(SW / 2, SH - 45, 'ビューーン！ 突風だ！', '#fff', 32);
+    }
+    drawShip(200 + p * 120 + q * SW, sy - q * q * 520, 2.2, q * Math.PI * 4);
+    return;
+  }
+  drawShip(200, sy, 2.2);
+  if (moving) {
+    for (let i = 0; i < 4; i++) line(105 - i * 30, sy + 4 + i * 4, 85 - i * 30, sy + 4 + i * 4, 'rgba(255,255,255,0.7)', 3);
+  }
+
+  // 手前の波
+  layer(1.6, 90, (x, i) => {
+    const y = SH - 30 + ((i % 2) + 2) % 2 * 14;
+    curve(x, y, x + 18, y - 7, x + 36, y, 'rgba(255,255,255,0.45)', 3);
+  });
+
+  // 飛ばされた直後のミッション表示（ふわっと出て、ふわっと消える）
+  if (missionT > 0) {
+    const a = Math.min(1, missionT / 0.6, (MISSION_TIME - missionT) / 0.4);
+    c.save();
+    c.globalAlpha = a;
+    box(0, SH / 2 - 85, SW, 150, 'rgba(18,35,58,0.82)');
+    box(0, SH / 2 - 85, SW, 5, '#ffb347');
+    box(0, SH / 2 + 60, SW, 5, '#ffb347');
+    txt(SW / 2, SH / 2 - 50, 'ミッション', '#ffb347', 22);
+    txt(SW / 2, SH / 2, '理科大のある飯田橋を目指せ！', '#fff', 44);
+    txt(SW / 2, SH / 2 + 40, 'ミカンを集めて、みかん丸を東京まで帰そう', '#bfe3ff', 18);
+    c.restore();
+  }
+}
+
+// 景色の上の町名と説明
+let townKey = '';
+function updateTownInfo(si, f) {
+  if (introT > 0) {
+    if (townKey === 'intro') return;
+    townKey = 'intro';
+    document.getElementById('townStatus').textContent = '出航！';
+    document.getElementById('townName').textContent = '飯田橋';
+    document.getElementById('townSub').textContent = '東京理科大学から出航';
+    document.getElementById('townDesc').textContent = '東京理科大学のみんなに見送られて出航！ …あれ？ 風が強くなってきたぞ？';
+    document.getElementById('townGift').textContent = '';
+    return;
+  }
+  const last = si >= ROUTE.length - 1;
+  const ti = last || f < 0.5 ? si : si + 1;
+  const status = last ? '🏁 到着' : ti === si ? (si === 0 ? '出発地' : '出発') : 'まもなく';
+  const key = ti + status;
+  if (key === townKey) return;
+  townKey = key;
+  const t = ROUTE[ti];
+  document.getElementById('townStatus').textContent = status;
+  document.getElementById('townName').textContent = t.name;
+  document.getElementById('townSub').textContent = t.sub;
+  document.getElementById('townDesc').textContent = t.desc;
+  document.getElementById('townGift').textContent =
+    t.goal ? `🏁 ゴール！ 名物：${t.gift}` : t.port ? `⚓ 寄港地　名物：${t.gift}（残りの球が${PORT_BONUS_IF}個以下なら球+1）` : ti === 0 ? 'スタート地点' : '通過地点';
+}
+
+// ---------- HUD ----------
+const trackEl = document.getElementById('routeTrack');
+const stripEl = document.getElementById('routeStrip');
+const STOP_GAP = 170;  // 地名どうしの間隔(px)
+const STRIP_RETURN = 5; // 手を離してから現在地に戻るまでの秒数
+let trackX = 0;         // 帯の今の位置
+let stripView = null;   // 手で動かしているときの帯の位置（null なら船についていく）
+let stripIdle = 0;
+let stripDrag = null;
+
+// 最初の町からゴールまで、はみ出しすぎない範囲に収める
+function clampStrip(x) {
+  const w = stripEl.clientWidth;
+  return Math.min(w * 0.5, Math.max(w * 0.5 - (ROUTE.length - 1) * STOP_GAP, x));
+}
+function moveStrip(x) {
+  stripView = clampStrip(x);
+  stripIdle = STRIP_RETURN;
+}
+
+stripEl.addEventListener('pointerdown', e => {
+  if (e.target.closest('.stripArrow')) return;
+  stripDrag = { x: e.clientX, start: trackX };
+  stripEl.setPointerCapture(e.pointerId);
+  stripEl.classList.add('dragging');
+});
+stripEl.addEventListener('pointermove', e => {
+  if (stripDrag) moveStrip(stripDrag.start + e.clientX - stripDrag.x);
+});
+function endStripDrag() {
+  stripDrag = null;
+  stripEl.classList.remove('dragging');
+}
+stripEl.addEventListener('pointerup', endStripDrag);
+stripEl.addEventListener('pointercancel', endStripDrag);
+stripEl.addEventListener('wheel', e => {
+  e.preventDefault();
+  moveStrip(trackX - (Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY));
+}, { passive: false });
+document.getElementById('stripLeft').addEventListener('click', e => { e.currentTarget.blur(); moveStrip(trackX + STOP_GAP * 3); });
+document.getElementById('stripRight').addEventListener('click', e => { e.currentTarget.blur(); moveStrip(trackX - STOP_GAP * 3); });
+
+function updateStrip(dt) {
+  if (stripView === null || stripDrag) return;
+  stripIdle -= dt;
+  if (stripIdle <= 0) stripView = null;
+}
+
+function buildRouteList() {
+  trackEl.querySelectorAll('.stop').forEach(el => el.remove());
+  ROUTE.forEach((s, i) => {
+    const el = document.createElement('div');
+    el.className = 'stop' + (s.port || s.goal ? ' port' : '');
+    el.dataset.i = i;
+    el.style.left = (i * STOP_GAP) + 'px';
+    el.innerHTML = `<div class="dot"></div><span class="name">${s.goal ? '🏁' : s.port ? '⚓' : ''}${s.name}</span><span class="sub">${s.sub}・${s.d}🍊</span>`;
+    trackEl.appendChild(el);
+  });
+  document.getElementById('routeLine').style.width = ((ROUTE.length - 1) * STOP_GAP) + 'px';
+}
+
+function updateShipMarker() {
+  const i = currentSegment();
+  const frac = segmentFrac(i);
+  updateTownInfo(i, frac);
+  // 船は帯の左から30%の位置に止まっていて、地名のほうが横に流れる
+  const shipPos = (i + frac) * STOP_GAP;
+  document.getElementById('shipMarker').style.left = shipPos + 'px';
+  // ふだんは船を帯の左から30%の位置に合わせる。手で動かしている間はその位置を使う
+  trackX = stripView === null ? stripEl.clientWidth * 0.3 - shipPos : clampStrip(stripView);
+  trackEl.style.transform = `translateX(${trackX}px)`;
+  document.getElementById('where').textContent =
+    introT > 0 ? '東京理科大学を出航中' :
+    i >= ROUTE.length - 1 ? '🎉 東京理科大学に到着！' : `${AREA_TEXT[ROUTE[i].area]}（${ROUTE[i].name} → ${ROUTE[i + 1].name}）`;
+}
+
+function updateHud() {
+  document.getElementById('mikan').textContent = mikan;
+  document.getElementById('balls').textContent = balls;
+  trackEl.querySelectorAll('.stop').forEach(el => {
+    const i = +el.dataset.i;
+    el.classList.toggle('passed', mikan >= ROUTE[i].d);
+    el.classList.toggle('next', i === nextStop);
+  });
+  // 次の寄港地
+  let prev = 0, port = null;
+  for (const s of ROUTE) {
+    if ((s.port || s.goal) && s.d > mikan) { port = s; break; }
+    if (s.port) prev = s.d;
+  }
+  const nextEl = document.getElementById('next');
+  const fill = document.getElementById('nextFill');
+  if (port) {
+    nextEl.textContent = `次の寄港地：${port.name} まであと ${port.d - mikan}🍊`;
+    fill.style.width = ((mikan - prev) / (port.d - prev) * 100) + '%';
+  } else {
+    nextEl.textContent = 'ゴール！';
+    fill.style.width = '100%';
+  }
+}
+
+// ---------- 開始・終了 ----------
+const overlay = document.getElementById('overlay');
+const testPanel = document.getElementById('testPanel');
+let testMode = false;
+
+function startGame(test) {
+  if (!actx) {
+    try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { actx = null; }
+  }
+  testMode = test === true;
+  if (!testMode) testPanel.classList.add('hidden');
+  overlay.classList.add('hidden');
+  resetGame();
+  state = 'play';
+  jingle([523, 659, 784]);
+  introT = INTRO_TIME;
+  missionT = 0;
+  showToast('⛵ 東京理科大学から出航！', '神田川を下って東京湾へ…');
+}
+
+function endGame(result) {  // result: 'clear' / 'over' / 'retire'
+  state = result === 'clear' ? 'clear' : 'over';
+  introT = 0;
+  missionT = 0;
+  releaseInputs();
+  testPanel.classList.add('hidden');
+  toastQueue.length = 0;
+  toastTimer = 0;
+  toastEl.classList.remove('show');
+  // 船の絵が追いつく前でも、集めたミカンの数で着いた町を決める
+  const here = [...ROUTE].reverse().find(s => mikan >= s.d);
+  const rest = `<p>集めたミカン <b>${mikan}個</b>（飯田橋まであと ${Math.max(0, GOAL - mikan)}個）</p>`;
+  const titles = { clear: '🎉 東京理科大学に到着！', over: '⚓ 航海終了', retire: '🏳 リタイア' };
+  document.getElementById('ovTitle').textContent = titles[result] + (testMode ? '（テスト）' : '');
+  document.getElementById('ovBody').innerHTML =
+    result === 'clear'
+      ? `<p>みかん丸は長万部から飯田橋の東京理科大学まで帰ってきた！<br>集めたミカン <b>${mikan}個</b><br>残りの球 <b>${balls}個</b></p><p>長い航海、おつかれさま！🍊</p>`
+    : result === 'retire'
+      ? `<p>航海をとちゅうでやめました。<br>みかん丸は <b>${here.name}</b> の近くまで進んだ！</p>${rest}`
+      : `<p>球がなくなってしまった…<br>みかん丸は <b>${here.name}</b> の近くまで進んだ！</p>${rest}`;
+  document.getElementById('startBtn').textContent = 'もう一度出航する！';
+  overlay.classList.remove('hidden');
+  if (result === 'clear') jingle([523, 659, 784, 1047, 784, 1047, 1319], 0.14);
+}
+
+function retire() {
+  if (state !== 'play') return;
+  releaseInputs();
+  if (confirm('リタイアして航海を終わりますか？')) endGame('retire');
+}
+
+function releaseInputs() {
+  flippers.left.pressed = false;
+  flippers.right.pressed = false;
+  plungerHeld = false;
+  plungerPower = 0;
+}
+
+document.getElementById('startBtn').addEventListener('click', () => startGame(false));
+document.getElementById('tpRestart').addEventListener('click', () => startGame(true));
+
+// F2で管理者メニュー（テストモードの操作）を開け閉めする
+function toggleAdminMenu() {
+  const open = testPanel.classList.toggle('hidden') === false;
+  if (open && state === 'play') testMode = true;  // プレイ中に開いたら、このプレイはテスト扱い
+}
+document.getElementById('retireBtn').addEventListener('click', e => { e.currentTarget.blur(); retire(); });
+
+// 全画面にするとタスクバーも隠れて、画面いっぱいで遊べる
+const fsBtn = document.getElementById('fsBtn');
+fsBtn.addEventListener('click', () => {
+  fsBtn.blur();
+  if (document.fullscreenElement) document.exitFullscreen();
+  else if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(() => {});
+});
+document.addEventListener('fullscreenchange', () => {
+  fsBtn.textContent = document.fullscreenElement ? '⛶ 全画面をやめる（F）' : '⛶ 全画面（F）';
+});
+
+// ---------- テストモード ----------
+const tpWarp = document.getElementById('tpWarp');
+const tpInfinite = document.getElementById('tpInfinite');
+const tpAuto = document.getElementById('tpAuto');
+let autoPower = 0.7;
+
+ROUTE.forEach((s, i) => tpWarp.add(new Option(`${s.name}（${s.d}🍊）`, i)));
+
+testPanel.querySelectorAll('[data-add]').forEach(b =>
+  b.addEventListener('click', () => addMikan(+b.dataset.add, 250, 400)));
+document.getElementById('tpWarpGo').addEventListener('click', () => warpTo(+tpWarp.value));
+document.getElementById('tpFold').addEventListener('click', e => {
+  testPanel.classList.toggle('folded');
+  e.currentTarget.textContent = testPanel.classList.contains('folded') ? '＋' : '－';
+});
+tpAuto.addEventListener('change', () => { if (!tpAuto.checked) releaseInputs(); });
+// パネルを触ったあとにスペースや矢印キーがパネルに取られないようにする
+testPanel.addEventListener('click', e => { if (e.target.matches('button, input')) e.target.blur(); });
+tpWarp.addEventListener('change', () => tpWarp.blur());
+
+function warpTo(idx) {
+  if (state !== 'play') return;
+  const t = ROUTE[idx];
+  introT = 0;
+  missionT = 0;
+  mikan = t.d;
+  displayDist = t.d;
+  clearPending = false;
+  endTimer = 0;
+  toastQueue.length = 0;
+  nextStop = t.goal ? idx : idx + 1;  // ゴールだけは到着の処理をする
+  checkArrivals();
+  updateHud();
+  updateShipMarker();
+}
+
+function autoPlay() {
+  if (!ball) return;
+  const near = ball.y > 630 && ball.vy > 60;
+  setFlipper('left', near && ball.x < 250, true);
+  setFlipper('right', near && ball.x >= 250, true);
+  if (inLane() && Math.abs(ball.vy) < 1 && !plungerHeld) {
+    setPlunger(true);
+    autoPower = 0.4 + Math.random() * 0.6;
+  }
+  if (plungerHeld && plungerPower >= autoPower) setPlunger(false);
+}
+
+// ---------- 入力 ----------
+const KEYS_LEFT = ['ArrowLeft', 'KeyZ', 'KeyA', 'ShiftLeft'];
+const KEYS_RIGHT = ['ArrowRight', 'KeyM', 'Slash', 'KeyL', 'ShiftRight'];
+const KEYS_LAUNCH = ['Space', 'ArrowDown', 'Enter'];
+
+function setFlipper(side, on, auto = false) {
+  const f = flippers[side];
+  if (on && (f.brokenT > 0 || f.clampT > 0)) { f.pressed = false; return; }  // こわれている・カニにはさまれている間は動かない
+  if (on && !f.pressed && state === 'play') {
+    beep(120, 0.03, 'square', 0.03);
+    if (!auto && !ballNearFlipper(f)) {
+      f.presses = f.presses.filter(t => clock - t < MASH_WINDOW);
+      f.presses.push(clock);
+      if (f.presses.length >= MASH_LIMIT) {
+        f.brokenT = BREAK_TIME;
+        f.presses = [];
+        f.pressed = false;
+        popups.push({ x: f.px + f.side * 40, y: f.py - 40, text: '連打しすぎ！こわれた！', t: 1.5, big: true });
+        beep(90, 0.5, 'sawtooth', 0.06);
+        return;
+      }
+    }
+  }
+  f.pressed = on;
+}
+
+// 球がそのフリッパーで打てそうな所にあるか
+function ballNearFlipper(f) {
+  if (!ball || inLane()) return false;
+  return ball.y > 560 && (f.side > 0 ? ball.x < 270 : ball.x > 230);
+}
+
+// フリッパーの「熱さ」（0〜1）。空振りを続けるほど赤くなる
+function flipperHeat(f) {
+  return f.presses.filter(t => clock - t < MASH_WINDOW).length / (MASH_LIMIT - 1);
+}
+
+function updateFlipperHealth(dt) {
+  clock += dt;
+  for (const f of [flippers.left, flippers.right]) {
+    if (f.clampT > 0) { f.clampT -= dt; f.pressed = false; }
+    if (f.brokenT <= 0) continue;
+    f.brokenT -= dt;
+    f.pressed = false;
+    if (f.brokenT <= 0) {
+      f.brokenT = 0;
+      popups.push({ x: f.px + f.side * 40, y: f.py - 40, text: 'なおった！', t: 1, big: false });
+      beep(660, 0.08, 'triangle', 0.05);
+    }
+  }
+}
+function setPlunger(on) {
+  if (state !== 'play') return;
+  if (on && !plungerHeld) { plungerHeld = true; plungerPower = 0; }
+  else if (!on && plungerHeld) { plungerHeld = false; launch(); plungerPower = 0; }
+}
+
+window.addEventListener('keydown', e => {
+  if (state !== 'play' && (e.code === 'Enter' || e.code === 'Space') && !overlay.classList.contains('hidden')) {
+    e.preventDefault();
+    startGame(false);
+    return;
+  }
+  if (e.code === 'F2') { e.preventDefault(); toggleAdminMenu(); return; }
+  if (e.code === 'KeyF' && !e.repeat) { fsBtn.click(); return; }  // F：全画面 ⇔ 元に戻す
+  if (e.code === 'Escape') { retire(); return; }
+  if (KEYS_LEFT.includes(e.code)) { setFlipper('left', true); e.preventDefault(); }
+  if (KEYS_RIGHT.includes(e.code)) { setFlipper('right', true); e.preventDefault(); }
+  if (KEYS_LAUNCH.includes(e.code)) { if (!e.repeat) setPlunger(true); e.preventDefault(); }
+});
+window.addEventListener('keyup', e => {
+  if (KEYS_LEFT.includes(e.code)) setFlipper('left', false);
+  if (KEYS_RIGHT.includes(e.code)) setFlipper('right', false);
+  if (KEYS_LAUNCH.includes(e.code)) setPlunger(false);
+});
+
+function bindButton(id, down, up) {
+  const el = document.getElementById(id);
+  el.addEventListener('pointerdown', e => { e.preventDefault(); el.setPointerCapture(e.pointerId); down(); });
+  el.addEventListener('pointerup', up);
+  el.addEventListener('pointercancel', up);
+}
+bindButton('btnLeft', () => setFlipper('left', true), () => setFlipper('left', false));
+bindButton('btnRight', () => setFlipper('right', true), () => setFlipper('right', false));
+bindButton('btnLaunch', () => setPlunger(true), () => setPlunger(false));
+
+// 台の左右タップでもフリッパーが動く
+const activeTouches = new Map();
+canvas.addEventListener('pointerdown', e => {
+  const rect = canvas.getBoundingClientRect();
+  const side = (e.clientX - rect.left) < rect.width / 2 ? 'left' : 'right';
+  activeTouches.set(e.pointerId, side);
+  setFlipper(side, true);
+});
+function endTouch(e) {
+  const side = activeTouches.get(e.pointerId);
+  if (!side) return;
+  activeTouches.delete(e.pointerId);
+  if (![...activeTouches.values()].includes(side)) setFlipper(side, false);
+}
+canvas.addEventListener('pointerup', endTouch);
+canvas.addEventListener('pointercancel', endTouch);
+
+// ---------- 画面サイズ ----------
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = W * dpr;
+  canvas.height = H * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  resizeScene();
+}
+window.addEventListener('resize', resize);
+
+// ---------- メインループ ----------
+let last = performance.now();
+let acc = 0;
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  if (state === 'play') {
+    acc += dt;
+    while (acc >= STEP) { physicsStep(STEP); acc -= STEP; }
+  }
+  // 描画でエラーが起きても、ゲームが止まらないようにする
+  try {
+    update(dt);
+    ctx.save();
+    if (shakeT > 0) ctx.translate(Math.sin(clock * 60) * 6 * shakeT, Math.cos(clock * 47) * 4 * shakeT);
+    drawTable();
+  } catch (e) {
+    console.error(e);
+  } finally {
+    ctx.restore();
+  }
+  try { drawScene(); } catch (e) { console.error(e); }
+  requestAnimationFrame(frame);
+}
+
+resize();
+buildBackground();
+buildRouteList();
+spawnBall();
+updateHud();
+updateShipMarker();
+requestAnimationFrame(frame);
+// 全画面中は Esc キーをゲーム用に使う（Esc で全画面が解除されないようにする。戻すときは F キー）
+// ※ Chrome / Edge の機能。Esc を長押しすると、ブラウザの機能で全画面が解除される
+document.addEventListener('fullscreenchange', () => {
+  const kb = navigator.keyboard;
+  if (!kb || !kb.lock) return;
+  if (document.fullscreenElement) kb.lock(['Escape']).catch(() => {});
+  else kb.unlock();
+});
+</script>
+</body>
+</html>

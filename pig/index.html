@@ -1,0 +1,1431 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>三匹の子ぶた にげこめ！</title>
+<style>
+  html,body{margin:0;height:100%;background:#1d2b1d;overflow:hidden;}
+  body{display:flex;align-items:center;justify-content:center;}
+  canvas{display:block;outline:none;}
+</style>
+</head>
+<body>
+<canvas id="c" tabindex="0"></canvas>
+<script>
+/* =====================================================================
+   ★ 設定（ここの数字を変えると難易度を調整できます）
+   ===================================================================== */
+const CONFIG = {
+  // ---- ゲーム全体 ----
+  gameDurationSec: 300,     // 1プレイの長さ（秒）。300 = 5分
+  lifeMode: 'life3',        // 'life3' = ライフ制 / 'oneshot' = 1回ミスで終了（タイトル画面の M キーでも切替可）
+  lives: 3,                 // ライフ制のときのライフ数
+  sound: true,              // 効果音 ON/OFF
+  showWeakHint: true,       // 家の下に「〇〇に弱い」と表示する
+
+  // ---- テンポ ----
+  // オオカミは「ラウンド」ではなく途切れなく次々にやってくる。
+  // 失敗・本物の地震のときだけ、場のオオカミが逃げて少し止まり、その後また流れ始める。
+  startGraceSec: 0.4,       // ゲーム開始/再開 → 最初のオオカミが走り出すまで
+  failFxSec: 1.3,           // 失敗演出の長さ（1〜2秒）
+  quakeFxSec: 0.6,          // 本震のあと家が建ち直るまでの時間（この間オオカミは止まったまま）
+  pigMoveSec: 0.07,         // 豚の移動アニメ時間
+
+  // ---- カメラ ----
+  view: {
+    zoom: 0.55,             // 画面の引き具合（小さいほど広く見渡せる。1 = 寄り）
+                            // ※変えても到着までの秒数は変わらない（出現位置と速さを自動で合わせる）
+    houseScale: 0.8,        // 家の大きさ
+    houseSpread: 130,       // 家どうしの間隔（小さいほど真ん中に集まる）
+  },
+
+  // ---- オオカミ共通 ----
+  wolf: {
+    spawnDistance: 'auto',  // 出現位置までの距離。'auto' = 画面のすぐ外に自動で合わせる（数字も指定可）
+    arriveRadius: 200,      // 家の集まりを囲む「点線の円」の半径。オオカミがこの点線に着いた瞬間が判定
+    speedJitter: 0.05,      // 速度のばらつき（±5%）
+    rushSpeedFactor: 1.7,   // 突進型（赤いハチマキ）の速度倍率。普通のオオカミより速く突っ込んでくる
+    minArrivalGapSec: 0.65, // 到着と到着の間の最小間隔（家を移る猶予。これより詰まらない）
+  },
+
+  // ---- 武器の出し方（同じ家にいるだけの退屈な時間を作らない）----
+  variety: {
+    maxSafeStreak: 3,       // 同じ家が「安全」のまま続く到着回数の上限。超えたら必ずその家を狙う武器が来る
+    chaseChance: 0.5,       // 上限前でも、一番長く安全が続いている家を狙う確率
+  },
+
+  // ---- 武器の見え方（到着地点までの残り距離で判定）----
+  // ※突進型は速いぶん距離を割り引いて計算するので、「到着の何秒前に見えるか」は普通のオオカミと同じ
+  weaponView: {
+    silhouetteDistance: 530, // これより遠いと真っ黒なシルエット
+    clearDistance: 300,      // これより近いとはっきり見える（間は徐々に色がつく）
+  },
+
+  // ---- 難易度ステージ（from = ゲーム開始からの秒数）----
+  // speed: オオカミの速さ(px/秒)
+  //   （走る時間 ≒ 730 ÷ speed。730÷190 ≒ 3.8秒。引き具合を変えても自動で補正される）
+  // arrivalInterval: [最小,最大] 秒。オオカミが到着する間隔。小さいほど次々来る＝匹数が増える
+  //   ※走る時間より間隔が短いので、画面には常に何匹かが同時に走っている
+  // simultaneousChance: 2匹が「同時に到着」する確率。同時の2匹は必ず別々の武器
+  //   （＝武器2つ持ちの代わり。安全な家は1軒に確定）。3匹同時にはならない
+  // rushChance: 突進型（赤いハチマキ・速い）になる確率。後から出てきて先に着く
+  // ※どの到着の瞬間も、安全な家が最低1軒は必ず残る（外は常に危険）
+  stages: [
+    // 序盤は退屈しない程度にスタート → 3分まではゆるやかに上がる → 最後の1分半でぐっと難しく
+    // 最後(270秒〜)が最高難度
+    { from:   0, speed: 200, arrivalInterval: [2.3, 2.9],  simultaneousChance: 0.0,  rushChance: 0.05 },
+    { from:  20, speed: 210, arrivalInterval: [2.0, 2.6],  simultaneousChance: 0.05, rushChance: 0.12 },
+    { from:  40, speed: 220, arrivalInterval: [1.8, 2.3],  simultaneousChance: 0.12, rushChance: 0.18 },
+    { from:  60, speed: 230, arrivalInterval: [1.65, 2.1], simultaneousChance: 0.2,  rushChance: 0.22 },
+    { from:  90, speed: 240, arrivalInterval: [1.5, 1.95], simultaneousChance: 0.25, rushChance: 0.25 },
+    { from: 120, speed: 252, arrivalInterval: [1.4, 1.8],  simultaneousChance: 0.3,  rushChance: 0.27 },
+    { from: 150, speed: 263, arrivalInterval: [1.3, 1.7],  simultaneousChance: 0.34, rushChance: 0.29 },
+    { from: 180, speed: 275, arrivalInterval: [1.2, 1.6],  simultaneousChance: 0.38, rushChance: 0.3 },
+    { from: 210, speed: 290, arrivalInterval: [1.08, 1.45], simultaneousChance: 0.42, rushChance: 0.32 },
+    { from: 240, speed: 307, arrivalInterval: [0.96, 1.32], simultaneousChance: 0.46, rushChance: 0.34 },
+    { from: 270, speed: 323, arrivalInterval: [0.85, 1.2],  simultaneousChance: 0.5,  rushChance: 0.35 },
+  ],
+
+  // ---- 難易度（タイトル画面の ← → で選ぶ）----
+  // 上の stages は「むずかしい」の値。ほかの難易度は、それに下の倍率をかけて使う。
+  //   speedMul: 速さの倍率（小さいほどゆっくり）
+  //   intervalMul: 到着間隔の倍率（大きいほど間があく＝匹数が少ない）
+  //   simultaneousMul / rushMul: 2匹同時・突進型の出やすさの倍率
+  //   quake: 地震が起きるか
+  //   quakeIntervalMul: 地震の間隔の倍率（大きいほど少ない）
+  //   quakeWarnMul: 「ん？」から本震までの猶予の倍率（大きいほど余裕）
+  defaultDifficulty: 'normal',
+  difficulties: {
+    easy:   { name: 'かんたん',   speedMul: 0.8,  intervalMul: 1.4,  simultaneousMul: 0.4, rushMul: 0.4, quake: false, quakeIntervalMul: 1,   quakeWarnMul: 1 },
+    normal: { name: 'ふつう',     speedMul: 0.9,  intervalMul: 1.18, simultaneousMul: 0.7, rushMul: 0.7, quake: true,  quakeIntervalMul: 1.3, quakeWarnMul: 1.3 },
+    hard:   { name: 'むずかしい', speedMul: 1,    intervalMul: 1,    simultaneousMul: 1,   rushMul: 1,   quake: true,  quakeIntervalMul: 1,   quakeWarnMul: 1 },
+  },
+
+  // ---- 地震イベント ----
+  quake: {
+    enabled: true,
+    startSec: 0,            // この秒数以降に発生（0 = 最初から。1回目は開始後 intervalSec の最小値の半分〜最小値の間）
+    // 流れ：オオカミが一斉に立ち止まり「ん？」→ 小さく揺れる → 本震で家が全部つぶれる（外が正解）
+    //      → 家が建ち直る → オオカミがまた走り出す。地震中オオカミはずっと止まっている。フェイントなし。
+    intervalSec: [18, 28],  // 地震が来る間隔 [最小,最大] 秒。最小があるので連続しない
+    minLeadSec: 1.0,        // 次のオオカミ到着までこれ以上の余裕があるときだけ地震を起こす
+                            //（地震のあと外から家に戻る時間を残すため）
+    warnSecStart: 1.2,      // 予兆（ん？）→本震の猶予（地震が始まったころ）
+    warnSecEnd: 0.6,        // 予兆（ん？）→本震の猶予（ゲーム終盤）
+    bubbleScaleStart: 1.6,  // 「ん？」吹き出しの大きさ（始まったころ）
+    bubbleScaleEnd: 0.55,   // 「ん？」吹き出しの大きさ（終盤）
+    pWaveShake: 2.5,        // 予兆のときの小さな揺れ(px)
+    mainShake: 14,          // 本震の揺れ(px)
+  },
+
+  // ---- 家の入れかわり（回転）モード ----
+  // タイトル画面の S キーで ON/OFF。everySec ごとに家の場所がぐるっと回り、
+  // 確認画面（previewSec 秒。スペースキーで早くスタートも可）のあとに再開する。確認画面の間は時間も止まる。
+  shuffle: {
+    enabled: false,         // ★デフォルトOFF
+    everySec: 50,           // 何秒ごとに入れかわるか（生き残り時間で数える）
+    previewSec: 10,         // 確認画面を見る時間（秒）
+    rotateAnimSec: 1.2,     // 家がぐるっと回るアニメの時間
+  },
+
+  // ---- テスト用 ----
+  debug: {
+    startAtSec: 0,          // 例: 150 にすると後半(地震あり)から始まる
+    showInfo: false,        // true で右下に内部情報を表示
+  },
+};
+
+/* =====================================================================
+   定数・レイアウト
+   ===================================================================== */
+const W = 960, H = 640;
+const FONT = '"Hiragino Maru Gothic ProN","BIZ UDPGothic","Meiryo","Yu Gothic",sans-serif';
+const MATS = ['straw', 'wood', 'brick'];
+const WEAPON_OF = { straw: 'torch', wood: 'saw', brick: 'hammer' };
+const MAT_NAME = { straw: 'わら', wood: '木', brick: 'レンガ', plaza: '広場' };
+const WEAPON_NAME = { torch: '松明', saw: 'ノコギリ', hammer: 'ハンマー' };
+const FX_OF_MAT = { straw: 'burn', wood: 'cut', brick: 'smash' };
+// 4つの場所（矢印キーの方向）。それぞれに「家（素材）」か「広場」が入る
+const POSITIONS = ['left', 'top', 'right', 'down'];
+const DEFAULT_LAYOUT = { left: 'straw', top: 'wood', right: 'brick', down: 'plaza' };
+const ARROW = { left: '←', top: '↑', right: '→', down: '↓' };
+
+const CENTER = { x: 480, y: 385 };
+// 家（左・上・右）と外の広場（下）は真ん中に集まっている。
+// そのまわりを半径 arriveRadius の点線の円が囲み、オオカミがその点線に着いた瞬間に判定される。
+const SP = CONFIG.view.houseSpread;
+const JUDGE_R = CONFIG.wolf.arriveRadius;
+// 各場所の基準点（家なら家の足もと、広場なら広場の中心の少し下）
+const HOUSE_BASE = { left: { x: CENTER.x - SP, y: CENTER.y + 20 }, top: { x: CENTER.x, y: CENTER.y - SP * 0.8 }, right: { x: CENTER.x + SP, y: CENTER.y + 20 }, down: { x: CENTER.x, y: CENTER.y + SP + 4 } };
+const PIG_POS = {
+  left: { x: HOUSE_BASE.left.x, y: HOUSE_BASE.left.y - 4 }, top: { x: HOUSE_BASE.top.x, y: HOUSE_BASE.top.y - 4 },
+  right: { x: HOUSE_BASE.right.x, y: HOUSE_BASE.right.y - 4 }, down: { x: CENTER.x, y: CENTER.y + SP },
+};
+const PLAZA_R = 58; // 外の広場の大きさ
+// カメラが見る点
+const CAM_FOCUS = { x: CENTER.x, y: CENTER.y };
+const CORNER_ANGLES = [-140, -40, 150, 30].map(d => d * Math.PI / 180);
+// その場所が家か（広場でないか）
+function isHouse(s) { const c = G.houses[s]; return !!c && c !== 'plaza'; }
+function plazaSpot() { return POSITIONS.find(p => G.houses[p] === 'plaza') || 'down'; }
+// カメラ：画面上の (W/2, CAM_Y) に CENTER が来るように縮小表示
+const CAM_Y = H / 2;
+function viewBounds() {
+  const z = CONFIG.view.zoom;
+  return { x0: CAM_FOCUS.x - (W / 2) / z, x1: CAM_FOCUS.x + (W / 2) / z, y0: CAM_FOCUS.y - CAM_Y / z, y1: CAM_FOCUS.y + (H - CAM_Y) / z };
+}
+// オオカミの出現距離：'auto' なら、どの方向から来ても画面のすぐ外になる距離
+const SPAWN_DIST = (() => {
+  const v = CONFIG.wolf.spawnDistance;
+  if (typeof v === 'number') return v;
+  const b = viewBounds(); let r = 0;
+  for (const base of CORNER_ANGLES) for (const j of [-0.15, 0, 0.15]) {
+    const a = base + j, c = Math.cos(a), s = Math.sin(a);
+    const rx = c > 0 ? (b.x1 - CENTER.x) / c : (CENTER.x - b.x0) / -c;
+    const ry = s > 0 ? (b.y1 + 140 - CENTER.y) / s : (CENTER.y - b.y0) / -s; // 下側はキャラの背丈ぶん余分に
+    r = Math.max(r, Math.min(rx, ry));
+  }
+  return r + 60;
+})();
+// 走る距離が変わっても到着までの秒数が同じになるよう、速さを補正（基準の走る距離 = 730）
+const SPEED_SCALE = (SPAWN_DIST - CONFIG.wolf.arriveRadius) / 730;
+// 引くと文字が小さくなりすぎるので、画面上の文字の大きさをそろえる倍率
+const UI_K = Math.max(1, 0.68 / CONFIG.view.zoom);
+
+/* ===== 便利関数 ===== */
+const rand = (a, b) => a + Math.random() * (b - a);
+const randInt = (a, b) => Math.floor(rand(a, b + 1));
+const pick = a => a[Math.floor(Math.random() * a.length)];
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+function shuffled(a) { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+function hexRgb(h) { const n = parseInt(h.slice(1), 16); return [n >> 16 & 255, n >> 8 & 255, n & 255]; }
+function mix(a, b, t) { if (t <= 0) return a; const A = hexRgb(a), B = hexRgb(b); return `rgb(${A.map((v, i) => Math.round(v + (B[i] - v) * t)).join(',')})`; }
+function stageAt(t) { let idx = 0; CONFIG.stages.forEach((s, i) => { if (t >= s.from) idx = i; }); return { s: CONFIG.stages[idx], idx }; }
+
+/* =====================================================================
+   効果音（外部ファイルなし）
+   ===================================================================== */
+let AC = null;
+function initAudio() { try { if (!AC) AC = new (window.AudioContext || window.webkitAudioContext)(); if (AC.state === 'suspended') AC.resume(); } catch (e) { } }
+function tone(f, dur, type = 'square', vol = 0.1, f2 = null, delay = 0) {
+  if (!AC || !CONFIG.sound) return;
+  const t0 = AC.currentTime + delay, o = AC.createOscillator(), g = AC.createGain();
+  o.type = type; o.frequency.setValueAtTime(f, t0);
+  if (f2) o.frequency.exponentialRampToValueAtTime(f2, t0 + dur);
+  g.gain.setValueAtTime(vol, t0); g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+  o.connect(g).connect(AC.destination); o.start(t0); o.stop(t0 + dur + 0.02);
+}
+function noise(dur, vol = 0.2, freq = 800, delay = 0) {
+  if (!AC || !CONFIG.sound) return;
+  const t0 = AC.currentTime + delay, len = Math.floor(AC.sampleRate * dur);
+  const buf = AC.createBuffer(1, len, AC.sampleRate), d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+  const s = AC.createBufferSource(); s.buffer = buf;
+  const fl = AC.createBiquadFilter(); fl.type = 'lowpass'; fl.frequency.value = freq;
+  const g = AC.createGain(); g.gain.setValueAtTime(vol, t0); g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+  s.connect(fl).connect(g).connect(AC.destination); s.start(t0);
+}
+const SFX = {
+  move() { tone(720, 0.04, 'square', 0.035); },
+  bonk() { tone(240, 0.15, 'triangle', 0.25, 90); tone(900, 0.07, 'square', 0.04, 1400); },
+  clear() { tone(880, 0.07, 'square', 0.05); tone(1320, 0.1, 'square', 0.05, null, 0.07); },
+  hm() { tone(420, 0.12, 'sine', 0.2, 560); tone(560, 0.18, 'sine', 0.16, 780, 0.12); },
+  quake() { noise(1.2, 0.5, 300); tone(60, 1.0, 'sawtooth', 0.2, 30); },
+  burn() { noise(0.8, 0.25, 2500); tone(300, 0.5, 'sawtooth', 0.07, 120); },
+  cut() { noise(0.15, 0.3, 6000); tone(1200, 0.2, 'sawtooth', 0.07, 300); },
+  smash() { noise(0.5, 0.4, 900); tone(120, 0.3, 'square', 0.15, 50); },
+  caught() { tone(300, 0.1, 'square', 0.15, 150); noise(0.2, 0.2, 1500, 0.05); },
+  lose() { tone(440, 0.15, 'square', 0.07); tone(330, 0.15, 'square', 0.07, null, 0.15); tone(220, 0.35, 'square', 0.07, 110, 0.3); },
+  win() { [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.15, 'square', 0.07, null, i * 0.12)); },
+  shuffle() { tone(600, 0.08, 'triangle', 0.1, 900); tone(900, 0.08, 'triangle', 0.1, 600, 0.08); },
+  start() { tone(660, 0.08, 'square', 0.06); tone(990, 0.12, 'square', 0.06, null, 0.08); },
+};
+
+/* =====================================================================
+   ゲーム状態
+   ===================================================================== */
+const G = {
+  state: 'title', mode: CONFIG.lifeMode, paused: false, anim: 0,
+  time: 0, playTime: 0, score: 0, lives: 0, misses: 0,
+  repelled: 0, quakesDodged: 0,
+  houses: { ...DEFAULT_LAYOUT },
+  houseState: {}, titleRow: 0,
+  pigSpot: 'down', pig: { x: PIG_POS.down.x, y: PIG_POS.down.y, fx: 0, fy: 0, tx: 0, ty: 0, t: 1, dur: 0.1 },
+  pigFx: null, R: null, flyers: [], attacker: null, particles: [], popups: [], banner: null,
+  shake: 0, shakeBase: 0, resultT: 0, cleared: false, bestScore: 0, newBest: false,
+};
+function resetHouseStates() { for (const p of POSITIONS) G.houseState[p] = { fx: null, t: 0, pop: 0, wiggle: 0 }; }
+resetHouseStates();
+
+// 難易度
+const DIFF_ORDER = ['easy', 'normal', 'hard'];
+// ページを開いたときは、いつも「ふつう」（CONFIG.defaultDifficulty）から
+G.difficulty = CONFIG.defaultDifficulty;
+function diff() { return CONFIG.difficulties[G.difficulty] || CONFIG.difficulties.hard; }
+function changeDifficulty(d) {
+  const i = DIFF_ORDER.indexOf(G.difficulty);
+  G.difficulty = DIFF_ORDER[clamp(i + d, 0, DIFF_ORDER.length - 1)];
+  try { localStorage.setItem('three_pigs_difficulty', G.difficulty); } catch (e) { }
+  G.bestScore = loadBest(); SFX.move();
+}
+// ベストスコアは「難易度 × モード」ごとに記録
+function bestKey() { return 'three_pigs_best_' + G.difficulty + '_' + G.mode + (CONFIG.shuffle.enabled ? '_rot' : ''); }
+function toggleRotate() { CONFIG.shuffle.enabled = !CONFIG.shuffle.enabled; saveAdmin(); G.bestScore = loadBest(); SFX.move(); }
+function loadBest() { try { return +(localStorage.getItem(bestKey()) || 0); } catch (e) { return 0; } }
+function saveBest(v) { try { localStorage.setItem(bestKey(), String(v)); } catch (e) { } }
+G.bestScore = loadBest();
+
+function setPigTarget(spot, dur) {
+  const p = G.pig, t = PIG_POS[spot];
+  p.fx = p.x; p.fy = p.y; p.tx = t.x; p.ty = t.y; p.t = 0; p.dur = dur;
+}
+
+function startGame() {
+  initAudio(); SFX.start();
+  Object.assign(G, {
+    state: 'play', paused: false, time: CONFIG.debug.startAtSec, playTime: 0, score: 0, misses: 0,
+    lives: G.mode === 'oneshot' ? 1 : CONFIG.lives, repelled: 0, quakesDodged: 0,
+    flyers: [], attacker: null, particles: [], popups: [], banner: null,
+    shake: 0, shakeBase: 0, pigFx: null, retired: false, preview: null, houseAnim: null,
+  });
+  resetLayout();
+  // 入れかわりONなら最初から配置もランダム
+  if (CONFIG.shuffle.enabled) {
+    G.houses = randomLayout(null);
+    G.pigSpot = plazaSpot(); const pp = PIG_POS[G.pigSpot]; G.pig.x = pp.x; G.pig.y = pp.y;
+  }
+  G.R = {
+    clock: 0,          // オオカミ用の時計（地震中・失敗演出中は止まる）
+    paused: false, hold: 0, quake: null, nextQuakeAt: null, nextShuffleAt: null,
+    wolves: [], lastArrival: -Infinity, forceQuake: false,
+    safeStreak: { straw: 0, wood: 0, brick: 0 }, // 各家が何回連続で安全だったか
+  };
+  G.usedInfinite = ADMIN.infinite;
+}
+
+// リタイア：結果は出さずに最初の画面（タイトル）へ戻る。記録も残さない
+function retire() {
+  Object.assign(G, { state: 'title', paused: false, retired: true, preview: null, houseAnim: null, flyers: [], attacker: null, particles: [], popups: [], banner: null, pigFx: null, shake: 0, shakeBase: 0 });
+  resetLayout();
+  G.bestScore = loadBest();
+  SFX.move();
+}
+// 配置を最初の形に戻し、豚を広場に置く
+function resetLayout() {
+  G.houses = { ...DEFAULT_LAYOUT };
+  resetHouseStates();
+  G.pigSpot = plazaSpot(); const p = PIG_POS[G.pigSpot]; G.pig.x = p.x; G.pig.y = p.y; G.pig.t = 1;
+}
+
+function endGame(cleared) {
+  G.state = 'result'; G.cleared = cleared; G.resultT = 0; G.shakeBase = 0;
+  const best = loadBest();
+  // ∞ライフを使ったプレイはベスト記録に残さない
+  G.newBest = !G.usedInfinite && G.score > best;
+  G.bestScore = G.usedInfinite ? best : Math.max(best, G.score);
+  if (G.newBest) saveBest(G.score);
+  cleared ? SFX.win() : SFX.lose();
+}
+
+/* =====================================================================
+   管理者メニュー（F2）
+   ===================================================================== */
+const ADMIN = { open: false, sel: 0, infinite: false };
+const ADMIN_KEY = 'three_pigs_admin';
+function saveAdmin() {
+  try {
+    localStorage.setItem(ADMIN_KEY, JSON.stringify({
+      infinite: ADMIN.infinite, startAt: CONFIG.debug.startAtSec, quake: CONFIG.quake.enabled,
+      shuffle: CONFIG.shuffle.enabled, info: CONFIG.debug.showInfo, sound: CONFIG.sound,
+    }));
+  } catch (e) { }
+}
+(function loadAdmin() {
+  try {
+    const a = JSON.parse(localStorage.getItem(ADMIN_KEY) || 'null'); if (!a) return;
+    ADMIN.infinite = !!a.infinite; CONFIG.debug.startAtSec = a.startAt || 0; CONFIG.quake.enabled = a.quake !== false;
+    CONFIG.debug.showInfo = !!a.info; CONFIG.sound = a.sound !== false;
+    // 家の入れかわりは、ページを開いたときはいつも「なし」（CONFIG.shuffle.enabled）から
+  } catch (e) { }
+})();
+const START_OPTS = [0, 30, 60, 90, 120, 140, 180, 240, 270];
+const onoff = v => v ? 'ON' : 'OFF';
+const ADMIN_ITEMS = [
+  { label: '∞ライフ（ミスしても減らない）', get: () => onoff(ADMIN.infinite), act: () => { ADMIN.infinite = !ADMIN.infinite; if (ADMIN.infinite) G.usedInfinite = true; } },
+  { label: 'スタート時刻（次のプレイから）', get: () => `${CONFIG.debug.startAtSec}秒`, act: d => { let i = START_OPTS.indexOf(CONFIG.debug.startAtSec); if (i < 0) i = 0; CONFIG.debug.startAtSec = START_OPTS[(i + (d || 1) + START_OPTS.length) % START_OPTS.length]; } },
+  { label: '地震', get: () => onoff(CONFIG.quake.enabled), act: () => { CONFIG.quake.enabled = !CONFIG.quake.enabled; } },
+  { label: '家の入れかわり（50秒ごと）', get: () => onoff(CONFIG.shuffle.enabled), act: () => { CONFIG.shuffle.enabled = !CONFIG.shuffle.enabled; G.bestScore = loadBest(); } },
+  { label: '内部情報の表示', get: () => onoff(CONFIG.debug.showInfo), act: () => { CONFIG.debug.showInfo = !CONFIG.debug.showInfo; } },
+  { label: '効果音', get: () => onoff(CONFIG.sound), act: () => { CONFIG.sound = !CONFIG.sound; } },
+  { label: '今すぐ地震を起こす', get: () => G.state === 'play' ? '実行' : '（プレイ中のみ）', act: () => { if (G.state === 'play') { G.R.forceQuake = true; G.R.nextQuakeAt = 0; ADMIN.open = false; } } },
+  { label: '最初からプレイ', get: () => '実行', act: () => { ADMIN.open = false; startGame(); } },
+  { label: 'タイトルへ戻る', get: () => '実行', act: () => { ADMIN.open = false; G.state = 'title'; G.paused = false; } },
+];
+function adminKey(k) {
+  const n = ADMIN_ITEMS.length;
+  if (k === 'ArrowUp') ADMIN.sel = (ADMIN.sel + n - 1) % n;
+  else if (k === 'ArrowDown') ADMIN.sel = (ADMIN.sel + 1) % n;
+  else if (k === 'ArrowLeft' || k === 'ArrowRight' || k === 'Enter' || k === ' ') {
+    ADMIN_ITEMS[ADMIN.sel].act(k === 'ArrowLeft' ? -1 : 1); saveAdmin(); SFX.move();
+  }
+  else if (k === 'Escape') ADMIN.open = false;
+}
+function drawAdmin() {
+  ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0, 0, W, H);
+  const x = 200, y = 70, w = 560, h = 500;
+  rr(x, y, w, h, 18); ctx.fillStyle = 'rgba(15,20,30,0.95)'; ctx.fill(); ctx.strokeStyle = '#5fb0ff'; ctx.lineWidth = 3; ctx.stroke();
+  txt('管理者メニュー', W / 2, y + 38, 28, '#9fd0ff');
+  ADMIN_ITEMS.forEach((it, i) => {
+    const yy = y + 92 + i * 40, sel = i === ADMIN.sel;
+    if (sel) { rr(x + 20, yy - 17, w - 40, 34, 8); ctx.fillStyle = 'rgba(95,176,255,0.25)'; ctx.fill(); }
+    txt((sel ? '▶ ' : '　') + it.label, x + 36, yy, 19, sel ? '#fff' : '#ccd', 'left', null, sel ? 'bold' : 'normal');
+    const v = it.get();
+    txt(v, x + w - 36, yy, 19, v === 'ON' ? '#7fe08a' : v === 'OFF' ? '#ff8a7a' : '#ffd34a', 'right');
+  });
+  txt('↑↓ 選ぶ　← → / Enter 切り替え・実行　F2 / Esc 閉じる', W / 2, y + h - 26, 15, '#aab', 'center', null, 'normal');
+}
+
+// 4か所（家3軒＋広場）をランダムに並べかえる（前と同じ並びにはしない）
+function randomLayout(notSameAs) {
+  const items = POSITIONS.map(p => DEFAULT_LAYOUT[p]);
+  let m;
+  do { m = shuffled(items); } while (notSameAs && POSITIONS.every((p, i) => notSameAs[p] === m[i]));
+  const L = {}; POSITIONS.forEach((p, i) => L[p] = m[i]); return L;
+}
+// 家の入れかわり：家と広場の場所がランダムに入れかわる
+function rotateHouses() {
+  const R = G.R;
+  const old = { ...G.houses };
+  G.houses = randomLayout(old);
+  G.houseAnim = { from: old, t: 0 };
+  // 場のオオカミは逃げていき、確認画面へ
+  for (const w of R.wolves) if (w.visible) makeFlee(w);
+  R.wolves = []; R.lastArrival = -Infinity; R.paused = false;
+  G.pigFx = null; G.banner = null;
+  G.preview = { t: 0, dur: CONFIG.shuffle.previewSec };
+  SFX.shuffle();
+}
+function endPreview() {
+  G.preview = null; G.houseAnim = null;
+  G.R.nextShuffleAt = G.playTime + CONFIG.shuffle.everySec;
+  SFX.start();
+}
+// 回転アニメ中の家の位置（円の上をぐるっと動く）
+function houseBaseNow(pos) {
+  const A = G.houseAnim, b = HOUSE_BASE[pos];
+  if (!A) return b;
+  const e = Math.min(1, A.t / CONFIG.shuffle.rotateAnimSec), k = e < 0.5 ? 2 * e * e : 1 - Math.pow(-2 * e + 2, 2) / 2;
+  const mat = G.houses[pos];
+  const fromPos = POSITIONS.find(p => A.from[p] === mat);
+  const a0 = HOUSE_BASE[fromPos], c = { x: CENTER.x, y: CENTER.y - 20 };
+  const ang0 = Math.atan2(a0.y - c.y, a0.x - c.x), r0 = Math.hypot(a0.x - c.x, a0.y - c.y);
+  const ang1 = Math.atan2(b.y - c.y, b.x - c.x), r1 = Math.hypot(b.x - c.x, b.y - c.y);
+  let da = ang1 - ang0; // 近いほうの向きにぐるっと回る
+  while (da > Math.PI) da -= Math.PI * 2; while (da < -Math.PI) da += Math.PI * 2;
+  const ang = ang0 + da * k, r = lerp(r0, r1, k);
+  return { x: c.x + Math.cos(ang) * r, y: c.y + Math.sin(ang) * r };
+}
+
+/* =====================================================================
+   オオカミの連続出現（ラウンドなし）
+   到着時刻を先に決めて「到着時刻 - 走る時間」に出発させる。
+   到着と到着の間は必ず minArrivalGapSec 以上あける。
+   ===================================================================== */
+const LOOKAHEAD_SEC = 6; // この先何秒ぶんの到着を予約しておくか（走る時間より長く）
+
+function scheduleWolves() {
+  const R = G.R, wc = CONFIG.wolf, travel = SPAWN_DIST - wc.arriveRadius;
+  const allWeapons = Object.values(WEAPON_OF);
+  while (R.lastArrival < R.clock + LOOKAHEAD_SEC) {
+    // 到着するころのステージで決める
+    const ahead = R.lastArrival === -Infinity ? 0 : Math.max(0, R.lastArrival - R.clock);
+    const { s: st } = stageAt(G.time + ahead);
+    const D = diff();
+    const base = st.speed * D.speedMul * SPEED_SCALE * (1 + rand(-wc.speedJitter, wc.speedJitter));
+    const n = Math.random() < st.simultaneousChance * D.simultaneousMul ? 2 : 1;
+
+    // 武器：同時の2匹は必ず別の武器（＝安全な家は1軒残る）
+    // 長く安全が続いている家ほど狙われる（同じ家にいるだけの時間を作らない）
+    const vc = CONFIG.variety, sk = R.safeStreak;
+    const maxS = Math.max(...MATS.map(m => sk[m]));
+    let targets = shuffled(MATS);
+    if (maxS >= vc.maxSafeStreak || Math.random() < vc.chaseChance) {
+      const top = pick(MATS.filter(m => sk[m] === maxS));
+      targets = [top, ...shuffled(MATS.filter(m => m !== top))];
+    }
+    const weapons = targets.slice(0, n).map(m => WEAPON_OF[m]);
+    for (const m of MATS) sk[m] = weapons.includes(WEAPON_OF[m]) ? 0 : sk[m] + 1;
+
+    const ws = [];
+    for (let i = 0; i < n; i++) {
+      const type = Math.random() < st.rushChance * D.rushMul ? 'rush' : 'normal';
+      ws.push({ type, speed: type === 'rush' ? base * wc.rushSpeedFactor : base });
+    }
+    // 到着時刻
+    let arr = R.lastArrival === -Infinity ? -Infinity
+      : R.lastArrival + Math.max(wc.minArrivalGapSec, rand(st.arrivalInterval[0], st.arrivalInterval[1]) * D.intervalMul);
+    const minArr = R.clock + CONFIG.startGraceSec + Math.max(...ws.map(w => travel / w.speed));
+    arr = Math.max(arr, minArr);
+
+    // 来る方向：いちばん空いている方向（その方向から来るオオカミが一番早く着き終わる方向）を選ぶ
+    // → 同じ道で後ろから追い抜く（見た目と判定の順番がずれる）ことを防ぐ
+    const busyUntil = CORNER_ANGLES.map(() => -Infinity);
+    for (const w of R.wolves) busyUntil[w.corner] = Math.max(busyUntil[w.corner], w.arrival);
+    const used = [];
+    for (let i = 0; i < n; i++) {
+      const cand = shuffled(CORNER_ANGLES.map((_, k) => k).filter(k => !used.includes(k)));
+      cand.sort((p, q) => busyUntil[p] - busyUntil[q]);
+      used.push(cand[0]);
+    }
+
+    for (let i = 0; i < n; i++) {
+      const a = CORNER_ANGLES[used[i]] + rand(-0.15, 0.15);
+      const { type, speed } = ws[i];
+      R.wolves.push({
+        type, sim: n === 2, corner: used[i], baseSpeed: base, weapons: [weapons[i]], angle: a, speed, delay: arr - travel / speed, travel, arrival: arr,
+        x: CENTER.x + Math.cos(a) * SPAWN_DIST, y: CENTER.y + Math.sin(a) * SPAWN_DIST,
+        visible: false, anim: Math.random() * 6, dir: 1, turned: false, rem: travel, rot: 0,
+      });
+    }
+    R.lastArrival = arr;
+  }
+}
+
+function nextArrivalIn() {
+  const R = G.R; let m = Infinity;
+  for (const w of R.wolves) m = Math.min(m, w.arrival);
+  return m - R.clock;
+}
+
+// 失敗・本物の地震の演出が終わったら、また流れ始める
+function resumeStream() {
+  const R = G.R;
+  G.attacker = null; G.pigFx = null; G.banner = null; G.shakeBase = 0;
+  for (const pos of POSITIONS) { const hs = G.houseState[pos]; if (hs.fx) { hs.fx = null; hs.t = 0; hs.pop = 1; } }
+  setPigTarget(G.pigSpot, 0.12);
+  R.wolves = []; R.lastArrival = -Infinity; R.paused = false; R.quake = null;
+  if (R.nextQuakeAt !== null) R.nextQuakeAt = R.clock + rand(CONFIG.quake.intervalSec[0], CONFIG.quake.intervalSec[1]) * diff().quakeIntervalMul;
+}
+
+/* =====================================================================
+   判定
+   ===================================================================== */
+function arrive(w) {
+  const R = G.R;
+  R.wolves.splice(R.wolves.indexOf(w), 1);
+  const spot = G.pigSpot;
+  if (isHouse(spot)) {
+    const mat = G.houses[spot];
+    if (w.weapons.includes(WEAPON_OF[mat])) fail(w, FX_OF_MAT[mat]);
+    else repel(w);
+  } else fail(w, 'caught');
+}
+
+function repel(w) {
+  const t = PIG_POS[G.pigSpot];
+  w.fstate = 'dash'; w.tx = t.x; w.ty = t.y - 20; w.house = G.pigSpot;
+  G.flyers.push(w);
+  G.score++; G.repelled++;
+  G.pigFx = { type: 'happy', t: 0 };
+}
+
+function makeFlee(w) {
+  w.fstate = 'flee';
+  let dx = w.x - CENTER.x, dy = w.y - CENTER.y, d = Math.hypot(dx, dy);
+  if (d < 1) { dx = Math.cos(w.angle); dy = Math.sin(w.angle); d = 1; }
+  w.vx = dx / d * 700; w.vy = dy / d * 700; w.turned = false;
+  G.flyers.push(w);
+}
+
+function fail(w, type) {
+  const R = G.R;
+  R.hold = CONFIG.failFxSec;
+  if (!ADMIN.infinite) G.lives = G.mode === 'oneshot' ? 0 : G.lives - 1;
+  G.misses++;
+  const spot = G.pigSpot;
+  G.pigFx = { type, t: 0, spot, started: !w };
+  if (w) { const t = PIG_POS[spot]; G.attacker = { w, tx: t.x, ty: t.y - 15, phase: 'dash', t: 0, fx: type, spot }; }
+  for (const o of R.wolves) if (o.visible) makeFlee(o);
+  R.wolves = [];
+
+  const mat = isHouse(spot) ? G.houses[spot] : null;
+  let title = '', sub = '';
+  if (type === 'burn') { title = 'アチチ！'; sub = '松明は わらの家を燃やす！'; }
+  else if (type === 'cut') { title = 'スパッ！'; sub = 'ノコギリは 木の家を切る！'; }
+  else if (type === 'smash') { title = 'ドカーン！'; sub = 'ハンマーは レンガの家をくだく！'; }
+  else if (type === 'caught') {
+    title = 'ガブッ！';
+    sub = '広場はキケン！（地震のときだけ広場へ）';
+  }
+  else if (type === 'quake') { title = 'グシャッ！'; sub = '地震！ 家はぜんぶつぶれる → 広場(↓)へ'; }
+  G.banner = { title, sub, t: 0, color: '#ff5a4a' };
+  if (type === 'caught') SFX.caught();
+  G.shake = Math.max(G.shake, type === 'quake' ? G.shake : 5);
+  void mat;
+}
+
+function mainQuake() {
+  const R = G.R;
+  for (const pos of POSITIONS) {
+    if (!isHouse(pos)) continue; // 広場はつぶれない
+    const hs = G.houseState[pos]; hs.fx = 'collapse'; hs.t = 0;
+    const b = HOUSE_BASE[pos];
+    for (let i = 0; i < 16; i++) spawn({ kind: 'dust', x: b.x + rand(-90, 90), y: b.y + rand(-30, 5), vx: rand(-60, 60), vy: rand(-50, -10), life: rand(0.6, 1.1), size: rand(14, 26), color: '#cdbb94' });
+    for (let i = 0; i < 10; i++) spawn({ kind: 'chip', x: b.x + rand(-60, 60), y: b.y - rand(20, 100), vx: rand(-200, 200), vy: rand(-250, -80), g: 700, life: rand(0.6, 1), size: rand(5, 9), color: matColor(G.houses[pos]), vr: rand(-10, 10) });
+  }
+  G.shake = CONFIG.quake.mainShake; G.shakeBase = 0;
+  SFX.quake();
+  if (!isHouse(G.pigSpot)) {
+    // 成功（広場にいた）：オオカミは止まったまま、家が建ち直ったらまた走り出す
+    G.score++; G.quakesDodged++;
+    R.quake.after = CONFIG.quakeFxSec;
+    G.banner = { title: '地震セーフ！', sub: 'ゆれを見ぬいた！', t: 0, color: '#5fe07a' };
+    G.pigFx = { type: 'happy', t: 0 };
+  } else fail(null, 'quake');
+}
+
+function matColor(m) { return m === 'straw' ? '#e6c058' : m === 'wood' ? '#a8703a' : '#b9482f'; }
+
+/* =====================================================================
+   パーティクル・ポップアップ
+   ===================================================================== */
+function spawn(p) { G.particles.push(Object.assign({ vx: 0, vy: 0, g: 0, size: 4, color: '#fff', kind: 'dot', rot: 0, vr: 0, life: 1 }, p, { max: p.life || 1 })); }
+function popup(text, x, y, color = '#fff', size = 24, life = 0.8) { G.popups.push({ text, x, y, color, size: size * UI_K, t: 0, life }); }
+
+/* =====================================================================
+   更新
+   ===================================================================== */
+function update(dt) {
+  G.anim += dt;
+  if (G.paused || ADMIN.open) return;
+  if (G.state === 'play') {
+    if (G.preview) {
+      // 家の入れかわり確認画面：時間は止まる
+      G.preview.t += dt; if (G.houseAnim) G.houseAnim.t += dt;
+      const p = G.pig; if (p.t < 1) { p.t = Math.min(1, p.t + dt / p.dur); const e = 1 - (1 - p.t) * (1 - p.t); p.x = lerp(p.fx, p.tx, e); p.y = lerp(p.fy, p.ty, e); }
+      if (G.preview.t >= G.preview.dur) endPreview();
+    } else updatePlay(dt);
+  }
+  if (G.state === 'result') G.resultT += dt;
+  updateEffects(dt);
+}
+
+function updatePlay(dt) {
+  G.time += dt; G.playTime += dt;
+  if (G.time >= CONFIG.gameDurationSec) { G.time = CONFIG.gameDurationSec; endGame(true); return; }
+
+  // 豚の移動
+  const p = G.pig;
+  if (p.t < 1) { p.t = Math.min(1, p.t + dt / p.dur); const e = 1 - (1 - p.t) * (1 - p.t); p.x = lerp(p.fx, p.tx, e); p.y = lerp(p.fy, p.ty, e); }
+
+  const R = G.R;
+  // 失敗・本物の地震の演出中
+  if (R.hold > 0) {
+    R.hold -= dt;
+    if (R.hold <= 0) { if (G.lives <= 0) { endGame(false); return; } resumeStream(); }
+    return;
+  }
+
+  if (!R.paused) R.clock += dt;
+  scheduleWolves();
+
+  // 地震（予兆）
+  const qc = CONFIG.quake;
+  const QD = diff();
+  if ((qc.enabled && QD.quake && G.time >= qc.startSec) || R.forceQuake) {
+    if (R.nextQuakeAt === null) R.nextQuakeAt = R.clock + rand(qc.intervalSec[0] * 0.5, qc.intervalSec[0]) * QD.quakeIntervalMul;
+    if (!R.quake && R.clock >= R.nextQuakeAt && nextArrivalIn() >= qc.minLeadSec && R.wolves.some(w => w.visible)) {
+      R.forceQuake = false;
+      const p = clamp((G.time - qc.startSec) / Math.max(1, CONFIG.gameDurationSec - qc.startSec), 0, 1);
+      R.quake = { warn: lerp(qc.warnSecStart, qc.warnSecEnd, p) * QD.quakeWarnMul, bubble: lerp(qc.bubbleScaleStart, qc.bubbleScaleEnd, p), triggered: true, resolved: false, t: 0, after: 0 };
+      R.paused = true; // オオカミ停止
+      for (const w of R.wolves) if (w.visible) w.turned = true;
+      SFX.hm();
+    }
+  }
+  const q = R.quake;
+  if (q && !q.resolved) {
+    q.t += dt;
+    G.shakeBase = qc.pWaveShake;
+    if (q.t >= q.warn) {
+      q.resolved = true; G.shakeBase = 0;
+      mainQuake(); return;
+    }
+  } else if (q && q.resolved) {
+    // 本震のあと：家が建ち直るまでオオカミは止まったまま
+    q.after -= dt;
+    if (q.after <= 0) {
+      for (const pos of POSITIONS) { const hs = G.houseState[pos]; if (hs.fx) { hs.fx = null; hs.t = 0; hs.pop = 1; } }
+      G.pigFx = null;
+      for (const w of R.wolves) w.turned = false;
+      R.paused = false; R.quake = null;
+      R.nextQuakeAt = R.clock + rand(qc.intervalSec[0], qc.intervalSec[1]) * QD.quakeIntervalMul;
+    }
+  }
+
+  // 家の入れかわり（回転）
+  const sh = CONFIG.shuffle;
+  if (sh.enabled && !R.quake) {
+    if (R.nextShuffleAt === null) R.nextShuffleAt = sh.everySec;
+    if (G.playTime >= R.nextShuffleAt) { rotateHouses(); return; }
+  }
+
+  // オオカミ
+  for (const w of R.wolves.slice()) {
+    updateWolf(w, dt);
+    if (R.hold > 0) break;
+  }
+}
+
+function updateWolf(w, dt) {
+  const R = G.R, wc = CONFIG.wolf;
+  const tt = R.clock - w.delay;
+  if (tt < 0) { w.visible = false; return; }
+  w.visible = true;
+  const d = Math.min(w.travel, tt * w.speed);
+  w.rem = w.travel - d;
+  const r = SPAWN_DIST - d;
+  w.x = CENTER.x + Math.cos(w.angle) * r; w.y = CENTER.y + Math.sin(w.angle) * r;
+  // 突進型は砂ぼこりを上げる
+  if (w.type === 'rush' && !R.paused && Math.random() < dt * 25) spawn({ kind: 'dust', x: w.x - Math.cos(w.angle) * 10, y: w.y, vx: Math.cos(w.angle) * 60, vy: rand(-30, -5), life: 0.4, size: 9, color: '#d8c8a0' });
+  if (!R.paused) w.anim += dt * w.speed / 16;
+  w.dir = Math.cos(w.angle) > 0 ? -1 : 1;
+  if (w.turned) w.dir *= -1;
+  if (d >= w.travel) arrive(w);
+}
+
+function offscreen(o) { const b = viewBounds(); return o.x < b.x0 - 160 || o.x > b.x1 + 160 || o.y < b.y0 - 160 || o.y > b.y1 + 160; }
+
+function updateEffects(dt) {
+  // 飛んでいくオオカミ
+  for (const w of G.flyers) {
+    if (w.fstate === 'dash') {
+      const dx = w.tx - w.x, dy = w.ty - w.y, d = Math.hypot(dx, dy), step = 1000 * dt;
+      w.anim += dt * 40;
+      if (d <= 45 + step) {
+        w.fstate = 'bounce';
+        const nx = -dx / (d || 1), ny = -dy / (d || 1);
+        w.vx = nx * 560 + rand(-140, 140); w.vy = ny * 560 + rand(-140, 140);
+        w.spin = rand(10, 16) * (Math.random() < 0.5 ? -1 : 1);
+        const hs = G.houseState[w.house]; if (hs) hs.wiggle = 0.35;
+        SFX.bonk();
+        for (let i = 0; i < 8; i++) spawn({ kind: 'star', x: w.x + dx * 0.5, y: w.y + dy * 0.5, vx: rand(-220, 220), vy: rand(-220, 120), life: 0.5, size: rand(5, 9), color: '#fff3a0', vr: rand(-8, 8) });
+        popup('はじいた！', w.tx, w.ty - 110, '#ffffff', 32, 0.7);
+      } else { w.x += dx / d * step; w.y += dy / d * step; w.dir = dx > 0 ? 1 : -1; }
+    } else if (w.fstate === 'bounce') {
+      w.x += w.vx * dt; w.y += w.vy * dt; w.rot += w.spin * dt;
+    } else if (w.fstate === 'flee') {
+      w.x += w.vx * dt; w.y += w.vy * dt; w.anim += dt * 45; w.dir = w.vx > 0 ? 1 : -1;
+    }
+  }
+  G.flyers = G.flyers.filter(w => w.fstate === 'dash' || !offscreen(w));
+
+  // 襲いかかるオオカミ
+  const A = G.attacker;
+  if (A) {
+    A.t += dt;
+    if (A.phase === 'dash') {
+      const w = A.w, dx = A.tx - w.x, dy = A.ty - w.y, d = Math.hypot(dx, dy), step = 1000 * dt;
+      w.anim += dt * 40; w.dir = dx >= 0 ? 1 : -1;
+      if (d <= 38 + step) { A.phase = 'attack'; A.t = 0; startFailFx(A); }
+      else { w.x += dx / d * step; w.y += dy / d * step; }
+    }
+  }
+
+  // 豚の演出
+  if (G.pigFx && G.pigFx.started !== false) G.pigFx.t += dt;
+
+  // 家
+  for (const pos of POSITIONS) {
+    const hs = G.houseState[pos], b = HOUSE_BASE[pos];
+    hs.t += dt; hs.wiggle = Math.max(0, hs.wiggle - dt); hs.pop = Math.max(0, hs.pop - dt * 4);
+    if (hs.fx === 'burn' && hs.t < 1.3) {
+      const k = Math.ceil(dt * 120);
+      for (let i = 0; i < k; i++) spawn({ kind: 'flame', x: b.x + rand(-80, 80), y: b.y - rand(0, 150), vx: rand(-20, 20), vy: rand(-160, -70), life: rand(0.35, 0.7), size: rand(9, 17), color: pick(['#ff5a00', '#ff9a00', '#ffd23a']) });
+      if (Math.random() < dt * 20) spawn({ kind: 'dust', x: b.x + rand(-50, 50), y: b.y - 150, vx: rand(-20, 20), vy: -60, life: 1, size: 18, color: '#555048' });
+    }
+  }
+
+  // 揺れ
+  G.shake = Math.max(0, G.shake - dt * 14);
+
+  for (const p of G.particles) { p.life -= dt; p.x += p.vx * dt; p.y += p.vy * dt; p.vy += p.g * dt; p.rot += p.vr * dt; }
+  G.particles = G.particles.filter(p => p.life > 0);
+  for (const p of G.popups) p.t += dt;
+  G.popups = G.popups.filter(p => p.t < p.life);
+  if (G.banner) { G.banner.t += dt; if (G.banner.t > 1.2 && !(G.R && G.R.hold > 0)) G.banner = null; }
+}
+
+function startFailFx(A) {
+  G.pigFx.started = true;
+  const type = A.fx;
+  if (type === 'burn' || type === 'cut' || type === 'smash') {
+    const hs = G.houseState[A.spot]; hs.fx = type; hs.t = 0;
+    const b = HOUSE_BASE[A.spot];
+    if (type === 'burn') SFX.burn();
+    if (type === 'cut') SFX.cut();
+    if (type === 'smash') {
+      SFX.smash(); G.shake = 8;
+      for (let i = 0; i < 26; i++) spawn({ kind: 'chip', x: b.x + rand(-70, 70), y: b.y - rand(10, 120), vx: rand(-320, 320), vy: rand(-420, -120), g: 900, life: rand(0.6, 1.1), size: rand(7, 12), color: pick(['#b9482f', '#a03a24', '#d06040']), vr: rand(-12, 12) });
+      for (let i = 0; i < 8; i++) spawn({ kind: 'dust', x: b.x + rand(-70, 70), y: b.y - rand(0, 30), vx: rand(-50, 50), vy: rand(-40, 0), life: 0.9, size: 22, color: '#d8c8b0' });
+    }
+  }
+}
+
+/* =====================================================================
+   入力
+   ===================================================================== */
+function movePig(spot) {
+  if (G.state !== 'play' || G.paused || !G.R || G.R.hold > 0) return;
+  if (G.R.quake && G.R.quake.resolved) return; // 本震で家がつぶれている間は動けない
+  if (G.pigSpot === spot) return;
+  G.pigSpot = spot; setPigTarget(spot, CONFIG.pigMoveSec); SFX.move();
+}
+function toggleMode() { G.mode = G.mode === 'life3' ? 'oneshot' : 'life3'; G.bestScore = loadBest(); SFX.move(); }
+
+window.addEventListener('keydown', e => {
+  const k = e.key;
+  if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', ' '].includes(k)) e.preventDefault();
+  initAudio();
+  // F：全画面表示 ⇔ 元に戻す（どの画面でも）
+  if ((k === 'f' || k === 'F') && !ADMIN.open) { toggleFullscreen(); return; }
+  // F2：管理者メニュー（開いている間はゲームが止まる）
+  if (k === 'F2') { e.preventDefault(); ADMIN.open = !ADMIN.open; if (ADMIN.open) ADMIN.sel = 0; return; }
+  if (ADMIN.open) { e.preventDefault(); adminKey(k); return; }
+  if (G.state === 'title') {
+    if (k === ' ' || k === 'Enter') startGame();
+    else if (k === 'ArrowUp' || k === 'ArrowDown') { G.titleRow = (G.titleRow + 1) % 2; SFX.move(); }
+    else if (k === 'ArrowLeft' || k === 'ArrowRight') {
+      const d = k === 'ArrowLeft' ? -1 : 1;
+      if (G.titleRow === 0) changeDifficulty(d);
+      else if ((d > 0) !== CONFIG.shuffle.enabled) toggleRotate(); // ← なし / → あり
+    }
+    else if (k === 'm' || k === 'M') toggleMode();
+    else if (k === 's' || k === 'S') toggleRotate();
+    return;
+  }
+  if (G.state === 'result') {
+    if ((k === ' ' || k === 'Enter') && G.resultT > 0.8) startGame();
+    else if (k === 'm' || k === 'M') toggleMode();
+    else if (k === 'Escape') G.state = 'title';
+    return;
+  }
+  if (G.state === 'play') {
+    if (k === 'p' || k === 'P' || k === 'Escape') { G.paused = !G.paused; return; }
+    if (G.paused) { if (k === 'r' || k === 'R') retire(); return; }
+    // 入れかわり確認画面：スペースですぐスタート（矢印で先に家に入っておくのもOK）
+    if (G.preview && (k === ' ' || k === 'Enter')) { if (G.preview.t > 0.5) endPreview(); return; }
+    if (k === 'ArrowLeft') movePig('left');
+    else if (k === 'ArrowUp') movePig('top');
+    else if (k === 'ArrowRight') movePig('right');
+    else if (k === 'ArrowDown') movePig('down');
+  }
+});
+const cv = document.getElementById('c');
+// 全画面表示の切り替え
+function isFullscreen() { return !!(document.fullscreenElement || document.webkitFullscreenElement); }
+function toggleFullscreen() {
+  try {
+    if (isFullscreen()) { (document.exitFullscreen || document.webkitExitFullscreen).call(document); }
+    else { const el = document.documentElement; (el.requestFullscreen || el.webkitRequestFullscreen).call(el); }
+  } catch (e) { }
+  setTimeout(() => cv.focus(), 100);
+}
+// 一時停止画面のボタン（画面上の座標）
+const BTN_RESUME = { x: W / 2 - 250, y: H / 2 + 20, w: 150, h: 50 };
+const BTN_FULL = { x: W / 2 - 75, y: H / 2 + 20, w: 150, h: 50 };
+const BTN_RETIRE = { x: W / 2 + 100, y: H / 2 + 20, w: 150, h: 50 };
+const inBtn = (b, x, y) => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h;
+cv.addEventListener('mousedown', e => {
+  initAudio(); cv.focus();
+  if (ADMIN.open) return;
+  if (G.state === 'play' && G.paused) {
+    const r = cv.getBoundingClientRect(), mx = (e.clientX - r.left) / VS, my = (e.clientY - r.top) / VS;
+    if (inBtn(BTN_RESUME, mx, my)) G.paused = false;
+    else if (inBtn(BTN_FULL, mx, my)) toggleFullscreen();
+    else if (inBtn(BTN_RETIRE, mx, my)) retire();
+    return;
+  }
+  if (G.state === 'title') startGame();
+  else if (G.state === 'result' && G.resultT > 0.8) startGame();
+});
+
+/* =====================================================================
+   描画
+   ===================================================================== */
+const ctx = cv.getContext('2d');
+let VS = 1, DPR = 1;
+function resize() {
+  DPR = window.devicePixelRatio || 1;
+  VS = Math.min(window.innerWidth / W, window.innerHeight / H);
+  cv.style.width = W * VS + 'px'; cv.style.height = H * VS + 'px';
+  cv.width = Math.round(W * VS * DPR); cv.height = Math.round(H * VS * DPR);
+}
+window.addEventListener('resize', resize); resize();
+document.addEventListener('fullscreenchange', resize);
+document.addEventListener('webkitfullscreenchange', resize);
+
+function rr(x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
+function txt(s, x, y, size, color, align = 'center', stroke = null, weight = 'bold') {
+  ctx.font = `${weight} ${size}px ${FONT}`; ctx.textAlign = align; ctx.textBaseline = 'middle';
+  if (stroke) { ctx.lineWidth = Math.max(3, size / 5); ctx.strokeStyle = stroke; ctx.lineJoin = 'round'; ctx.strokeText(s, x, y); }
+  ctx.fillStyle = color; ctx.fillText(s, x, y);
+}
+function ell(x, y, rx, ry, fill) { ctx.beginPath(); ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2); ctx.fillStyle = fill; ctx.fill(); }
+
+const DECOR = (() => {
+  let s = 12345; const r = () => (s = (s * 16807) % 2147483647) / 2147483647;
+  const a = [];
+  for (let i = 0; i < 260; i++) a.push({ x: -500 + r() * 1960, y: -400 + r() * 1500, k: r() < 0.6 ? 'tuft' : 'flower', c: ['#ffffff', '#ffe066', '#ff9ec4'][Math.floor(r() * 3)] });
+  // 遠くの木（家や道の近くには置かない）
+  const trees = [];
+  let guard = 0;
+  while (trees.length < 34 && guard++ < 2000) {
+    const x = -450 + r() * 1860, y = -350 + r() * 1400;
+    const d = Math.hypot(x - CENTER.x, y - CENTER.y);
+    if (d < 400) continue;
+    if (trees.some(t => Math.hypot(t.x - x, t.y - y) < 90)) continue;
+    trees.push({ x, y, s: 0.8 + r() * 0.5 });
+  }
+  trees.sort((p, q) => p.y - q.y);
+  return { a, trees };
+})();
+
+function drawTree(x, y, s) {
+  ell(x, y + 4, 34 * s, 10 * s, 'rgba(0,0,0,0.18)');
+  ctx.fillStyle = '#7a5030'; ctx.fillRect(x - 6 * s, y - 30 * s, 12 * s, 32 * s);
+  ell(x, y - 52 * s, 34 * s, 30 * s, '#3f8a3a');
+  ell(x - 16 * s, y - 40 * s, 22 * s, 18 * s, '#4c9c42');
+  ell(x + 14 * s, y - 64 * s, 20 * s, 16 * s, '#56a84a');
+}
+
+function drawBackground() {
+  const B = viewBounds();
+  ctx.fillStyle = '#86c55e'; ctx.fillRect(B.x0 - 40, B.y0 - 40, B.x1 - B.x0 + 80, B.y1 - B.y0 + 80);
+  const g = ctx.createRadialGradient(CENTER.x, CENTER.y, 80, CENTER.x, CENTER.y, 900);
+  g.addColorStop(0, 'rgba(255,255,200,0.2)'); g.addColorStop(1, 'rgba(0,40,0,0.25)');
+  ctx.fillStyle = g; ctx.fillRect(B.x0 - 40, B.y0 - 40, B.x1 - B.x0 + 80, B.y1 - B.y0 + 80);
+  for (const t of DECOR.trees) drawTree(t.x, t.y, t.s);
+  for (const d of DECOR.a) {
+    if (d.k === 'tuft') { ctx.strokeStyle = '#5f9c40'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(d.x - 4, d.y); ctx.lineTo(d.x - 6, d.y - 7); ctx.moveTo(d.x, d.y); ctx.lineTo(d.x, d.y - 9); ctx.moveTo(d.x + 4, d.y); ctx.lineTo(d.x + 6, d.y - 7); ctx.stroke(); }
+    else { ell(d.x, d.y, 3.2, 3.2, d.c); ell(d.x, d.y, 1.4, 1.4, '#f0a020'); }
+  }
+  // 広場は今の配置の場所に描く（入れかわりアニメ中は動く）
+  const ps = plazaSpot(), pb = houseBaseNow(ps), d = { x: pb.x, y: pb.y - 4 };
+  // 判定の点線（家の集まりを丸く囲む。オオカミがここに着いた瞬間が判定）
+  ctx.save();
+  ctx.fillStyle = 'rgba(255,255,230,0.12)';
+  ctx.beginPath(); ctx.arc(CENTER.x, CENTER.y, JUDGE_R, 0, Math.PI * 2); ctx.fill();
+  ctx.setLineDash([18, 14]); ctx.lineDashOffset = -G.anim * 20;
+  ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 5;
+  ctx.beginPath(); ctx.arc(CENTER.x, CENTER.y, JUDGE_R, 0, Math.PI * 2); ctx.stroke();
+  ctx.restore();
+  // 外の広場（石畳）
+  ell(d.x, d.y - 6, PLAZA_R + 6, (PLAZA_R + 6) * 0.62, '#9d957f');
+  ell(d.x, d.y - 6, PLAZA_R, PLAZA_R * 0.62, '#ddd5c2');
+  ctx.save();
+  ctx.beginPath(); ctx.ellipse(d.x, d.y - 6, PLAZA_R, PLAZA_R * 0.62, 0, 0, Math.PI * 2); ctx.clip();
+  ctx.strokeStyle = '#b9b09a'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.ellipse(d.x, d.y - 6, PLAZA_R * 0.55, PLAZA_R * 0.55 * 0.62, 0, 0, Math.PI * 2); ctx.stroke();
+  ctx.beginPath();
+  for (let i = 0; i < 12; i++) { const a = i * Math.PI / 6; ctx.moveTo(d.x + Math.cos(a) * PLAZA_R * 0.55, d.y - 6 + Math.sin(a) * PLAZA_R * 0.55 * 0.62); ctx.lineTo(d.x + Math.cos(a) * PLAZA_R, d.y - 6 + Math.sin(a) * PLAZA_R * 0.62); }
+  for (let i = 0; i < 6; i++) { const a = i * Math.PI / 3 + 0.3; ctx.moveTo(d.x, d.y - 6); ctx.lineTo(d.x + Math.cos(a) * PLAZA_R * 0.55, d.y - 6 + Math.sin(a) * PLAZA_R * 0.55 * 0.62); }
+  ctx.stroke();
+  ctx.restore();
+  // 植木鉢（広場の両わき）
+  for (const sx of [-1, 1]) {
+    const px = d.x + sx * (PLAZA_R + 12), py = d.y - 2;
+    ctx.fillStyle = '#b5653a'; ctx.beginPath(); ctx.moveTo(px - 9, py - 14); ctx.lineTo(px + 9, py - 14); ctx.lineTo(px + 6, py); ctx.lineTo(px - 6, py); ctx.fill();
+    ell(px, py - 20, 11, 9, '#4c9c42'); ell(px - 4, py - 24, 3, 3, '#ff7aa8'); ell(px + 4, py - 21, 3, 3, '#ffe066');
+  }
+  { const fs = 24 * UI_K, bw = 104 * UI_K;
+    rr(d.x - bw / 2, d.y + 26, bw, fs * 1.5, fs * 0.75); ctx.fillStyle = 'rgba(40,25,10,0.75)'; ctx.fill();
+    txt(`${ARROW[ps]} 広場`, d.x, d.y + 26 + fs * 0.75, fs, '#fff');
+    // 家の「〇〇に弱い」と同じように、地震がある難易度だけ「地震のときはここ！」と書く
+    if (CONFIG.showWeakHint && CONFIG.quake.enabled && diff().quake)
+      txt('地震のときはここ！', d.x, d.y + 26 + fs * 1.5 + 19 * UI_K * 0.75, 19 * UI_K, '#3a2a10', 'center', 'rgba(255,255,255,0.6)'); }
+}
+
+/* ---- 家 ---- */
+function houseShape(mat, dk = 0) {
+  const C = h => mix(h, '#1e140c', dk);
+  ctx.lineWidth = 2;
+  if (mat === 'straw') {
+    rr(-72, -100, 144, 100, 6); ctx.fillStyle = C('#eccb6a'); ctx.fill();
+    ctx.strokeStyle = C('#c89a35');
+    ctx.beginPath(); for (let x = -64; x <= 64; x += 9) { ctx.moveTo(x, -96); ctx.lineTo(x + ((x / 9) % 2 ? 2 : -2), -4); } ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-90, -94); ctx.lineTo(90, -94); ctx.lineTo(0, -168); ctx.closePath(); ctx.fillStyle = C('#d9a53a'); ctx.fill();
+    ctx.strokeStyle = C('#b07e22'); ctx.beginPath(); for (let i = 0; i <= 10; i++) { ctx.moveTo(0, -166); ctx.lineTo(-88 + i * 17.6, -96); } ctx.stroke();
+    ctx.beginPath(); for (let x = -90; x < 90; x += 10) { ctx.moveTo(x, -94); ctx.lineTo(x + 5, -86); ctx.lineTo(x + 10, -94); } ctx.fillStyle = C('#c8922a'); ctx.fill();
+  } else if (mat === 'wood') {
+    // 板（2色交互）
+    for (let i = 0, y = -100; y < 0; y += 14, i++) { ctx.fillStyle = C(i % 2 ? '#c48a50' : '#ad7440'); ctx.fillRect(-72, y, 144, Math.min(14, -y)); }
+    ctx.strokeStyle = C('#7f4c22'); ctx.lineWidth = 1.5; ctx.beginPath(); for (let y = -86; y < 0; y += 14) { ctx.moveTo(-72, y); ctx.lineTo(72, y); } ctx.stroke();
+    // 木目
+    ctx.strokeStyle = C('#946031'); ctx.lineWidth = 1; ctx.beginPath();
+    for (let i = 0, y = -93; y < 0; y += 14, i++) { const x0 = -50 + (i * 37) % 80; ctx.moveTo(x0, y); ctx.quadraticCurveTo(x0 + 10, y - 3, x0 + 22, y); }
+    ctx.stroke();
+    // 柱（両はし）と上の梁
+    ctx.fillStyle = C('#6b3e1c'); ctx.fillRect(-74, -100, 11, 100); ctx.fillRect(63, -100, 11, 100); ctx.fillRect(-74, -102, 148, 8);
+    // 鉄の帯（まん中）
+    ctx.fillStyle = C('#80868f'); ctx.fillRect(-63, -52, 126, 6);
+    ctx.fillStyle = C('#cfd4db'); for (let x = -56; x <= 56; x += 16) { ctx.beginPath(); ctx.arc(x, -49, 1.8, 0, Math.PI * 2); ctx.fill(); }
+    // 鉄の角金具＋銀の釘
+    ctx.fillStyle = C('#80868f');
+    for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+      const cx = sx * 68, cy = sy < 0 ? -96 : -4;
+      ctx.fillRect(cx - (sx > 0 ? 14 : 0) - 2, cy - (sy > 0 ? 4 : 0), 16, 4);
+      ctx.fillRect(cx - 2, cy - (sy > 0 ? 14 : 0), 4, 16);
+    }
+    for (let y = -93; y < 0; y += 14) for (const x of [-68.5, 68.5]) {
+      ctx.fillStyle = C('#e2e6ec'); ctx.beginPath(); ctx.arc(x, y, 2.2, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = C('#5b6068'); ctx.lineWidth = 0.8; ctx.stroke();
+    }
+    // 屋根（板ぶき2色）＋てっぺんの鉄板
+    ctx.beginPath(); ctx.moveTo(-88, -96); ctx.lineTo(88, -96); ctx.lineTo(0, -162); ctx.closePath(); ctx.fillStyle = C('#7a4524'); ctx.fill();
+    ctx.save(); ctx.clip();
+    for (let i = 0; i < 5; i++) { ctx.fillStyle = C(i % 2 ? '#8a5330' : '#6e3d1e'); ctx.fillRect(-90, -96 - (i + 1) * 14, 180, 14); }
+    ctx.restore();
+    ctx.strokeStyle = C('#4e2a10'); ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(-88, -96); ctx.lineTo(0, -162); ctx.lineTo(88, -96); ctx.stroke();
+    ctx.fillStyle = C('#80868f'); ctx.beginPath(); ctx.moveTo(-14, -151); ctx.lineTo(0, -164); ctx.lineTo(14, -151); ctx.lineTo(0, -156); ctx.closePath(); ctx.fill();
+  } else {
+    ctx.fillStyle = C('#6e2a20'); ctx.fillRect(38, -158, 20, 40);
+    rr(-72, -100, 144, 100, 3); ctx.fillStyle = C('#b9482f'); ctx.fill();
+    ctx.strokeStyle = C('#ecd0bc'); ctx.lineWidth = 1.5; ctx.beginPath();
+    for (let r = 0, y = -100; y < 0; y += 12, r++) { ctx.moveTo(-72, y); ctx.lineTo(72, y); for (let x = -72 + (r % 2 ? 12 : 0); x < 72; x += 24) { ctx.moveTo(x, y); ctx.lineTo(x, y + 12); } }
+    ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-90, -96); ctx.lineTo(90, -96); ctx.lineTo(0, -160); ctx.closePath(); ctx.fillStyle = C('#6e2a20'); ctx.fill();
+    ctx.strokeStyle = C('#4e1a12'); ctx.lineWidth = 2; ctx.beginPath(); for (let i = 1; i < 4; i++) { const y = -96 - i * 15, hw = 90 * (1 - i * 15 / 64); ctx.moveTo(-hw, y); ctx.lineTo(hw, y); } ctx.stroke();
+  }
+  // 窓
+  ctx.fillStyle = C('#5a3a20'); ctx.fillRect(32, -78, 28, 26);
+  ctx.fillStyle = C('#bfe3ff'); ctx.fillRect(35, -75, 22, 20);
+  ctx.fillStyle = C('#5a3a20'); ctx.fillRect(45, -75, 2, 20); ctx.fillRect(35, -66, 22, 2);
+  // ドア
+  ctx.beginPath(); ctx.moveTo(-22, 0); ctx.lineTo(-22, -42); ctx.arc(0, -42, 22, Math.PI, 0); ctx.lineTo(22, 0); ctx.closePath();
+  ctx.fillStyle = C(mat === 'straw' ? '#8a5a1c' : mat === 'wood' ? '#5a3212' : '#4a2a1a'); ctx.fill();
+  ell(13, -28, 2.6, 2.6, C('#f0c040'));
+  if (mat === 'wood') {
+    // 木の家のドア：鉄の蝶番
+    ctx.fillStyle = C('#80868f');
+    for (const hy of [-48, -14]) { ctx.fillRect(-22, hy, 26, 5); ctx.fillStyle = C('#cfd4db'); ctx.beginPath(); ctx.arc(-17, hy + 2.5, 1.5, 0, Math.PI * 2); ctx.arc(-5, hy + 2.5, 1.5, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = C('#80868f'); }
+  }
+}
+
+function drawHouse(pos) {
+  const b = houseBaseNow(pos), hs = G.houseState[pos], mat = G.houses[pos];
+  ctx.save(); ctx.translate(b.x, b.y);
+  ctx.scale(CONFIG.view.houseScale, CONFIG.view.houseScale);
+  ell(0, 2, 88, 12, 'rgba(0,0,0,0.18)');
+  if (hs.wiggle > 0) ctx.rotate(Math.sin(hs.wiggle * 45) * hs.wiggle * 0.12);
+  if (hs.pop > 0) { const s = 1 - hs.pop * 0.35 + Math.sin((1 - hs.pop) * Math.PI) * 0.12; ctx.scale(s, s); }
+  const t = hs.t;
+  if (!hs.fx) houseShape(mat);
+  else if (hs.fx === 'burn') {
+    houseShape(mat, Math.min(0.85, t * 1.1));
+  } else if (hs.fx === 'cut') {
+    const e = Math.min(1, t / 0.8), ee = e * e;
+    const P1 = [-110, -20], P2 = [110, -125];
+    ctx.save(); ctx.beginPath(); ctx.moveTo(...P1); ctx.lineTo(...P2); ctx.lineTo(110, 20); ctx.lineTo(-110, 20); ctx.closePath(); ctx.clip(); houseShape(mat); ctx.restore();
+    ctx.save(); ctx.translate(-ee * 70, ee * 60); ctx.rotate(-ee * 0.45);
+    ctx.beginPath(); ctx.moveTo(...P1); ctx.lineTo(...P2); ctx.lineTo(110, -220); ctx.lineTo(-110, -220); ctx.closePath(); ctx.clip(); houseShape(mat); ctx.restore();
+    if (t < 0.25) { ctx.strokeStyle = `rgba(255,255,255,${1 - t / 0.25})`; ctx.lineWidth = 5; ctx.beginPath(); ctx.moveTo(...P1); ctx.lineTo(...P2); ctx.stroke(); }
+  } else if (hs.fx === 'smash' || hs.fx === 'collapse') {
+    const sy = Math.max(0.18, 1 - t * 4);
+    if (hs.fx === 'collapse') ctx.rotate((pos === 'left' ? -1 : pos === 'right' ? 1 : 0.4) * (1 - sy) * 0.12);
+    ctx.scale(1 + (1 - sy) * 0.25, sy);
+    houseShape(mat, (1 - sy) * 0.35);
+  }
+  ctx.restore();
+  // ラベル
+  const ly = b.y + 26;
+  const label = `${ARROW[pos]} ${MAT_NAME[mat]}`;
+  const fs = 27 * UI_K;
+  ctx.font = `bold ${fs}px ${FONT}`; const tw = ctx.measureText(label).width + 30 * UI_K;
+  rr(b.x - tw / 2, ly - fs * 0.7, tw, fs * 1.4, fs * 0.7); ctx.fillStyle = 'rgba(40,25,10,0.75)'; ctx.fill();
+  txt(label, b.x, ly, fs, '#fff');
+  if (CONFIG.showWeakHint) txt(`${WEAPON_NAME[WEAPON_OF[mat]]}に弱い`, b.x, ly + fs * 1.25, 19 * UI_K, '#3a2a10', 'center', 'rgba(255,255,255,0.6)');
+}
+
+/* ---- 武器 ---- */
+function weaponPath(type, sil) {
+  const S = c => sil ? '#151515' : c;
+  if (type === 'torch') {
+    // 松明：赤い持ち手＋大きな赤〜オレンジの炎（縦長のしずく形）
+    ctx.fillStyle = S('#b3261e'); ctx.fillRect(-4, -30, 8, 38);
+    ctx.fillStyle = S('#7a1410'); ctx.fillRect(-6, -34, 12, 7);
+    const f = 1 + Math.sin(G.anim * 22) * 0.1;
+    ctx.beginPath(); ctx.moveTo(0, -72 * f); ctx.quadraticCurveTo(20, -48, 12, -34); ctx.quadraticCurveTo(0, -26, -12, -34); ctx.quadraticCurveTo(-20, -48, 0, -72 * f);
+    ctx.fillStyle = S('#ff3a12'); ctx.fill();
+    if (!sil) {
+      ctx.beginPath(); ctx.moveTo(0, -60 * f); ctx.quadraticCurveTo(13, -44, 8, -35); ctx.quadraticCurveTo(0, -30, -8, -35); ctx.quadraticCurveTo(-13, -44, 0, -60 * f); ctx.fillStyle = '#ff9a1a'; ctx.fill();
+      ctx.beginPath(); ctx.moveTo(0, -48 * f); ctx.quadraticCurveTo(6, -40, 4, -36); ctx.quadraticCurveTo(0, -33, -4, -36); ctx.quadraticCurveTo(-6, -40, 0, -48 * f); ctx.fillStyle = '#ffe04a'; ctx.fill();
+    }
+  } else if (type === 'saw') {
+    // ノコギリ：銀色の幅広い刃（先が広がる台形）＋大きなギザギザの歯、ねずみ色の持ち手
+    ctx.beginPath(); ctx.moveTo(-5, -4); ctx.lineTo(-8, -62); ctx.lineTo(10, -66);
+    for (let i = 0; i < 8; i++) { ctx.lineTo(20 - i * 1.2, -62 + i * 7.5); ctx.lineTo(12 - i * 0.8, -58.5 + i * 7.5); }
+    ctx.lineTo(6, -4); ctx.closePath(); ctx.fillStyle = S('#dfe3ea'); ctx.fill();
+    if (!sil) {
+      ctx.strokeStyle = '#7b818c'; ctx.lineWidth = 2; ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(-3, -10); ctx.lineTo(-5, -56); ctx.stroke(); // 刃の光
+      ell(2, -52, 2.5, 2.5, '#9aa0aa');
+    }
+    rr(-9, -6, 19, 18, 5); ctx.fillStyle = S('#6f747d'); ctx.fill();
+    if (!sil) { ctx.strokeStyle = '#4a4e55'; ctx.lineWidth = 1.5; ctx.stroke(); }
+  } else {
+    // ハンマー：真っ黒な大きい四角い頭のT字
+    ctx.fillStyle = S('#2a2a2e'); ctx.fillRect(-4, -42, 8, 52);
+    rr(-21, -60, 42, 22, 3); ctx.fillStyle = S('#0e0e10'); ctx.fill();
+    if (!sil) {
+      ctx.fillStyle = '#55565e'; ctx.fillRect(-19, -58, 38, 4); // つやの線
+      ctx.fillStyle = '#2e2e33'; ctx.fillRect(-21, -42, 42, 4);
+      ctx.strokeStyle = '#e8e8ec'; ctx.lineWidth = 1.5; rr(-21, -60, 42, 22, 3); ctx.stroke(); // 背景に溶けないよう白いふち
+    }
+  }
+}
+function drawWeapon(type, clarity) {
+  weaponPath(type, true);
+  if (clarity > 0) { ctx.save(); ctx.globalAlpha *= clarity; weaponPath(type, false); ctx.restore(); }
+}
+function clarityOf(rem) {
+  const v = CONFIG.weaponView;
+  const s0 = v.silhouetteDistance * SPEED_SCALE, s1 = v.clearDistance * SPEED_SCALE;
+  return clamp((s0 - rem) / Math.max(1, s0 - s1), 0, 1);
+}
+
+/* ---- オオカミ（二頭身のちびキャラ・横向き）---- */
+function drawWolf(x, y, dir, anim, weapons, clarity, o = {}) {
+  ctx.save(); ctx.translate(x, y);
+  ell(0, 2, 22, 7, 'rgba(0,0,0,0.22)');
+  if (o.rot) { ctx.translate(0, -35); ctx.rotate(o.rot); ctx.translate(0, 35); }
+  const sc = 1.2; ctx.scale(dir * sc, sc);
+  const sw = o.still ? 0 : Math.sin(anim), leg = sw * 6, bob = o.still ? 0 : -Math.abs(sw) * 4;
+  ctx.translate(0, bob);
+  const fur = '#8a8fa0', furD = '#6e7385', furL = '#c9ccd6';
+  // ふさふさしっぽ
+  ctx.fillStyle = fur; ctx.beginPath(); ctx.moveTo(-10, -16); ctx.quadraticCurveTo(-30, -14, -30, -34); ctx.quadraticCurveTo(-22, -26, -8, -24); ctx.fill();
+  ell(-28, -34, 6, 6, furL);
+  // 足（ちょこちょこ）
+  ell(-5 - leg, -3, 7, 4.5, '#3d3a4a'); ell(6 + leg, -3, 7, 4.5, '#3d3a4a');
+  // 奥の手
+  ell(-11 - sw * 3, -15, 5, 5, furD);
+  // からだ（ちいさいシャツ）
+  ctx.beginPath(); ctx.ellipse(0, -15, 13, 12, 0, 0, Math.PI * 2); ctx.fillStyle = '#d0453a'; ctx.fill();
+  ell(2, -11, 7, 5, '#f3d9c0');
+  // 大きな頭
+  ctx.fillStyle = furD;
+  ctx.beginPath(); ctx.moveTo(-14, -56); ctx.lineTo(-12, -78); ctx.lineTo(0, -62); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(2, -63); ctx.lineTo(12, -80); ctx.lineTo(16, -58); ctx.fill();
+  ctx.fillStyle = '#f2a7b5';
+  ctx.beginPath(); ctx.moveTo(-11, -60); ctx.lineTo(-10, -72); ctx.lineTo(-3, -62); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(5, -63); ctx.lineTo(11, -74); ctx.lineTo(13, -60); ctx.fill();
+  ell(2, -44, 21, 19, fur);
+  if (o.rush) {
+    // 突進型：赤いハチマキ（なびく）＋スピード線
+    ctx.fillStyle = '#e8242c'; ctx.fillRect(-19, -58, 40, 7);
+    const fl = Math.sin(G.anim * 30) * 3;
+    ctx.beginPath(); ctx.moveTo(-18, -57); ctx.lineTo(-36, -62 + fl); ctx.lineTo(-34, -54 + fl); ctx.lineTo(-18, -52); ctx.fill();
+    if (!o.still) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.beginPath();
+      for (let i = 0; i < 3; i++) { const yy = -50 + i * 16, ox = (G.anim * 300 + i * 17) % 20; ctx.moveTo(-34 - ox, yy); ctx.lineTo(-52 - ox, yy); }
+      ctx.stroke();
+    }
+  }
+  ell(17, -38, 12, 8, furL);          // マズル
+  ell(28, -41, 4, 3.4, '#222');       // 鼻
+  ell(-8, -36, 5, 3, '#f5a3b5');      // ほっぺ
+  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.moveTo(18, -32); ctx.lineTo(20, -28); ctx.lineTo(22, -32); ctx.fill(); // 牙
+  if (o.dizzy) { ctx.strokeStyle = '#222'; ctx.lineWidth = 2.4; ctx.beginPath(); ctx.moveTo(4, -52); ctx.lineTo(12, -44); ctx.moveTo(12, -52); ctx.lineTo(4, -44); ctx.stroke(); }
+  else {
+    ell(8, -48, 4.2, 5.4, '#222'); ell(9.5, -50, 1.6, 1.8, '#fff');
+    ctx.strokeStyle = '#3a3a48'; ctx.lineWidth = 2.4; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(2, -57); ctx.lineTo(13, -54); ctx.stroke(); // いじわる眉
+  }
+  // 手前の手＋武器
+  const hx = 14 + sw * 2, hy = -16 + (o.swing ? -4 : 0);
+  ctx.save(); ctx.translate(hx, hy); ctx.rotate(0.25 + (o.swing || 0)); ctx.scale(0.85, 0.85); drawWeapon(weapons[0], clarity); ctx.restore();
+  ell(hx, hy, 5.5, 5.5, fur);
+  ctx.restore();
+}
+
+function drawBubble(x, y, scale, s) {
+  ctx.save(); ctx.translate(x, y); ctx.scale(scale, scale);
+  rr(-34, -26, 68, 44, 14); ctx.fillStyle = '#fff'; ctx.fill(); ctx.strokeStyle = '#333'; ctx.lineWidth = 2.5; ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-6, 17); ctx.lineTo(0, 30); ctx.lineTo(8, 17); ctx.fillStyle = '#fff'; ctx.fill();
+  ctx.beginPath(); ctx.moveTo(-6, 18.5); ctx.lineTo(0, 30); ctx.lineTo(8, 18.5); ctx.stroke();
+  txt(s, 0, -4, 26, '#222');
+  ctx.restore();
+}
+
+/* ---- 豚（二頭身のちびキャラ・正面向き）---- */
+function drawPig(x, y, s, o = {}) {
+  ctx.save(); ctx.translate(x, y);
+  if (o.shakeX) ctx.translate(o.shakeX, 0);
+  if (!o.headOnly) ell(0, 2, 20 * s, 6 * s, 'rgba(0,0,0,0.22)');
+  ctx.scale(s, s * (o.flat || 1));
+  if (o.hop) ctx.translate(0, -o.hop);
+  const dk = o.charred || 0;
+  const C = h => mix(h, '#2a2422', dk);
+  const skin = C('#f9b4c4'), line = C('#d77a94');
+  if (!o.headOnly) {
+    // ちょこんとした足
+    ell(-7, -3, 6.5, 4.5, C('#c96a84')); ell(7, -3, 6.5, 4.5, C('#c96a84'));
+    // 手（まんまる）
+    if (o.happy || o.xeyes) { ell(-17, -30, 5.5, 5.5, skin); ell(17, -30, 5.5, 5.5, skin); }
+    else { ell(-15, -14, 5.5, 5.5, skin); ell(15, -14, 5.5, 5.5, skin); }
+    // からだ（オーバーオール）
+    ctx.beginPath(); ctx.ellipse(0, -15, 13, 12, 0, 0, Math.PI * 2); ctx.fillStyle = C('#4a8fe0'); ctx.fill();
+    ctx.fillStyle = C('#4a8fe0'); ctx.fillRect(-9, -27, 4, 8); ctx.fillRect(5, -27, 4, 8);
+    ell(-6, -19, 2, 2, C('#ffd34a')); ell(6, -19, 2, 2, C('#ffd34a'));
+  } else ctx.translate(0, 30);
+  // 大きな頭
+  ctx.fillStyle = line;
+  ctx.beginPath(); ctx.moveTo(-18, -56); ctx.quadraticCurveTo(-24, -72, -16, -70); ctx.lineTo(-6, -64); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(18, -56); ctx.quadraticCurveTo(24, -72, 16, -70); ctx.lineTo(6, -64); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(0, -44, 22, 20, 0, 0, Math.PI * 2); ctx.fillStyle = skin; ctx.fill(); ctx.strokeStyle = line; ctx.lineWidth = 2; ctx.stroke();
+  ell(-14, -37, 5, 3, C('#ff8fae')); ell(14, -37, 5, 3, C('#ff8fae'));
+  ell(0, -37, 9, 6.5, C('#f48aa6')); ell(-3.2, -37, 1.8, 2.6, line); ell(3.2, -37, 1.8, 2.6, line);
+  if (o.xeyes) { ctx.strokeStyle = '#222'; ctx.lineWidth = 2.2; ctx.beginPath(); for (const ex of [-9, 9]) { ctx.moveTo(ex - 3.5, -52); ctx.lineTo(ex + 3.5, -45); ctx.moveTo(ex + 3.5, -52); ctx.lineTo(ex - 3.5, -45); } ctx.stroke(); }
+  else if (o.happy) { ctx.strokeStyle = '#222'; ctx.lineWidth = 2.4; ctx.lineCap = 'round'; ctx.beginPath(); ctx.arc(-9, -47, 4, Math.PI, 0); ctx.moveTo(13, -47); ctx.arc(9, -47, 4, Math.PI, 0); ctx.stroke(); }
+  else { ell(-9, -48, 3.8, 4.8, '#222'); ell(9, -48, 3.8, 4.8, '#222'); ell(-7.8, -50, 1.4, 1.6, '#fff'); ell(10.2, -50, 1.4, 1.6, '#fff'); }
+  if (o.sweat) { ctx.fillStyle = '#7ec8ff'; ctx.beginPath(); ctx.moveTo(22, -62); ctx.quadraticCurveTo(28, -52, 22, -50); ctx.quadraticCurveTo(16, -52, 22, -62); ctx.fill(); }
+  ctx.restore();
+}
+
+function drawPigNow() {
+  const p = G.pig, fx = G.pigFx, spot = G.pigSpot;
+  const inS = 0.72 * CONFIG.view.houseScale; // 家の中にいるときの大きさ（ドアに収まる）
+  let s = isHouse(spot) ? lerp(1, inS, p.t) : (p.t < 1 ? lerp(0.85, 1, p.t) : 1);
+  let x = p.x, y = p.y; const o = {};
+  if (fx && fx.started !== false) {
+    const t = fx.t;
+    if (fx.type === 'happy') { o.happy = true; o.hop = Math.abs(Math.sin(t * 14)) * 10 * Math.max(0, 1 - t * 1.5); }
+    else if (fx.type === 'quake' && isHouse(fx.spot)) { o.flat = 0.35; o.xeyes = true; s = 0.8; }
+    else {
+      if (isHouse(fx.spot)) { y += Math.min(1, t * 6) * 30; s = 0.85; }
+      o.xeyes = t > 0.15; o.shakeX = t < 0.6 ? Math.sin(t * 60) * 3 : 0;
+      if (fx.type === 'burn') o.charred = Math.min(0.85, t * 2);
+      if (fx.type === 'cut') o.sweat = true;
+    }
+  }
+  drawPig(x, y, s, o);
+}
+
+/* ---- パーティクル ---- */
+function drawParticles() {
+  for (const p of G.particles) {
+    const a = clamp(p.life / p.max, 0, 1);
+    ctx.save(); ctx.globalAlpha = a;
+    if (p.kind === 'flame') ell(p.x, p.y, p.size * (0.4 + a * 0.6), p.size * (0.5 + a * 0.7), p.color);
+    else if (p.kind === 'dust') { ctx.globalAlpha = a * 0.7; ell(p.x, p.y, p.size * (1.6 - a * 0.6), p.size * (1.2 - a * 0.4), p.color); }
+    else if (p.kind === 'chip') { ctx.translate(p.x, p.y); ctx.rotate(p.rot); ctx.fillStyle = p.color; ctx.fillRect(-p.size, -p.size * 0.6, p.size * 2, p.size * 1.2); }
+    else if (p.kind === 'star') { ctx.translate(p.x, p.y); ctx.rotate(p.rot); ctx.fillStyle = p.color; ctx.beginPath(); for (let i = 0; i < 10; i++) { const r = i % 2 ? p.size * 0.45 : p.size, an = i * Math.PI / 5; ctx.lineTo(Math.cos(an) * r, Math.sin(an) * r); } ctx.fill(); }
+    else ell(p.x, p.y, p.size, p.size, p.color);
+    ctx.restore();
+  }
+}
+
+/* ---- HUD ---- */
+function drawHUD() {
+  // 上の真ん中（オオカミが来ない方向）に、残り時間とライフだけ。背景の帯なし
+  // 生き残っている時間（カウントアップ）。5分の上限はそのまま
+  const el = Math.floor(G.playTime);
+  const mm = Math.floor(el / 60), ss = el % 60;
+  const tx = W / 2 - 50;
+  txt(`${mm}:${String(ss).padStart(2, '0')}`, tx, 22, 24, '#fff', 'center', 'rgba(0,0,0,0.55)');
+  if (ADMIN.infinite) txt('∞', W / 2 + 40, 22, 26, '#9fd0ff', 'center', 'rgba(0,0,0,0.55)');
+  else if (G.mode === 'oneshot') txt('一発', W / 2 + 40, 22, 18, '#ffd34a', 'center', 'rgba(0,0,0,0.55)');
+  else {
+    for (let i = 0; i < CONFIG.lives; i++) {
+      const x = W / 2 + 12 + i * 26;
+      ctx.save(); if (i >= G.lives) ctx.globalAlpha = 0.3;
+      drawPig(x, 35, 0.62, i >= G.lives ? { xeyes: true, headOnly: true } : { headOnly: true });
+      ctx.restore();
+    }
+  }
+  txt('矢印キー : その方向の家・広場へ　P : 一時停止　F : 全画面', W / 2, H - 12, 13, 'rgba(255,255,255,0.8)', 'center', 'rgba(0,0,0,0.35)', 'normal');
+}
+
+function drawBanner() {
+  const b = G.banner; if (!b) return;
+  const a = Math.min(1, b.t * 8), sc = 0.7 + Math.min(1, b.t * 8) * 0.3;
+  ctx.save(); ctx.globalAlpha = a; ctx.translate(W / 2, 292); ctx.scale(sc, sc);
+  ctx.font = `bold 20px ${FONT}`; const sw = Math.max(260, ctx.measureText(b.sub).width + 50);
+  rr(-sw / 2, -46, sw, 92, 18); ctx.fillStyle = 'rgba(20,15,10,0.78)'; ctx.fill();
+  txt(b.title, 0, -14, 40, b.color, 'center', '#000');
+  txt(b.sub, 0, 24, 20, '#fff');
+  ctx.restore();
+}
+
+// 家の入れかわり確認画面（上のほうに表示。家と配置はそのまま見える）
+function drawPreview() {
+  const P = G.preview; if (!P) return;
+  const left = Math.max(0, Math.ceil(P.dur - P.t));
+  const a = Math.min(1, P.t * 4);
+  ctx.save(); ctx.globalAlpha = a;
+  rr(W / 2 - 300, 48, 600, 132, 18); ctx.fillStyle = 'rgba(20,15,10,0.82)'; ctx.fill(); ctx.strokeStyle = '#ffe066'; ctx.lineWidth = 3; ctx.stroke();
+  txt('家と広場の場所が入れかわった！', W / 2, 76, 26, '#ffe066');
+  const map = POSITIONS.map(p => `${ARROW[p]} ${MAT_NAME[G.houses[p]]}`).join('　　');
+  txt(map, W / 2, 112, 24, '#fff');
+  txt(`あと ${left} 秒でスタート　（スペースキーですぐスタート・矢印で先に家に入ってもOK）`, W / 2, 152, 15, '#ddd', 'center', null, 'normal');
+  ctx.restore();
+}
+
+function drawPopups() {
+  for (const p of G.popups) {
+    const a = 1 - p.t / p.life;
+    ctx.save(); ctx.globalAlpha = a;
+    txt(p.text, p.x, p.y - p.t * 40, p.size, p.color, 'center', '#222');
+    ctx.restore();
+  }
+}
+
+/* ---- 画面全体 ---- */
+function render() {
+  ctx.setTransform(VS * DPR, 0, 0, VS * DPR, 0, 0);
+  ctx.save();
+  const sh = G.paused ? 0 : G.shake + G.shakeBase;
+  if (sh > 0) ctx.translate((Math.random() - 0.5) * 2 * sh, (Math.random() - 0.5) * 2 * sh);
+  ctx.fillStyle = '#86c55e'; ctx.fillRect(-20, -20, W + 40, H + 40);
+  // カメラ（引きの構図）
+  ctx.translate(W / 2, CAM_Y); ctx.scale(CONFIG.view.zoom, CONFIG.view.zoom); ctx.translate(-CAM_FOCUS.x, -CAM_FOCUS.y);
+  drawBackground();
+  // 家を奥（上）から順に描く。広場の場所は描かない（背景で描いている）
+  POSITIONS.filter(isHouse).sort((p, q) => houseBaseNow(p).y - houseBaseNow(q).y).forEach(drawHouse);
+
+  // 奥行き順に並べて描く
+  const ents = [];
+  ents.push({ y: G.pig.y + (isHouse(G.pigSpot) ? -1 : 0), draw: drawPigNow });
+  const R = G.R;
+  if (G.state === 'play' && R) {
+    for (const w of R.wolves) if (w.visible) ents.push({ y: w.y, draw: () => drawWolf(w.x, w.y, w.dir, w.anim, w.weapons, clarityOf(w.rem * w.baseSpeed / w.speed), { still: R.paused, rush: w.type === 'rush' }) });
+  }
+  for (const w of G.flyers) ents.push({ y: w.y, draw: () => drawWolf(w.x, w.y, w.dir, w.anim, w.weapons, 1, { rot: w.fstate === 'bounce' ? w.rot : 0, dizzy: w.fstate === 'bounce' }) });
+  if (G.attacker) { const A = G.attacker, w = A.w; ents.push({ y: w.y + 30, draw: () => drawWolf(w.x, w.y, w.dir, w.anim, w.weapons, 1, { swing: A.phase === 'attack' ? Math.sin(A.t * 18) * 0.8 : 0, still: A.phase === 'attack' }) }); }
+  ents.sort((a, b) => a.y - b.y).forEach(e => e.draw());
+
+  drawParticles();
+  // 「ん？」吹き出し
+  if (G.state === 'play' && R && R.quake && R.quake.triggered && !R.quake.resolved) {
+    for (const w of R.wolves) if (w.visible && w.turned) drawBubble(w.x, w.y - 150 - (R.quake.bubble * UI_K - 1) * 30, R.quake.bubble * 1.4 * UI_K, 'ん？');
+  }
+  drawPopups();
+  ctx.restore();
+
+  if (G.state === 'play' || G.state === 'result') { drawHUD(); drawBanner(); }
+  if (G.state === 'play' && G.preview) drawPreview();
+  if (G.state === 'title') drawTitle();
+  if (G.state === 'result') drawResult();
+  if (G.paused) {
+    ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, W, H);
+    txt('一時停止中', W / 2, H / 2 - 50, 48, '#fff', 'center', '#000');
+    for (const [b, label, sub, col] of [[BTN_RESUME, 'つづける', 'P キー', '#3f8f4a'], [BTN_FULL, isFullscreen() ? '全画面をやめる' : '全画面', 'F キー', '#3f6fa8'], [BTN_RETIRE, 'リタイア', 'R キー', '#b8433a']]) {
+      rr(b.x, b.y, b.w, b.h, 12); ctx.fillStyle = col; ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; ctx.stroke();
+      txt(label, b.x + b.w / 2, b.y + b.h / 2, label.length > 5 ? 17 : 22, '#fff');
+      txt(sub, b.x + b.w / 2, b.y + b.h + 16, 14, '#ddd', 'center', null, 'normal');
+    }
+  }
+  if (CONFIG.debug.showInfo) drawDebug();
+  if (ADMIN.open) drawAdmin();
+}
+
+function panel(x, y, w, h) { rr(x, y, w, h, 22); ctx.fillStyle = 'rgba(25,20,15,0.85)'; ctx.fill(); ctx.strokeStyle = '#e8c060'; ctx.lineWidth = 3; ctx.stroke(); }
+
+function drawTitle() {
+  ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(0, 0, W, H);
+  panel(130, 50, 700, 540);
+  txt('三匹の子ぶた', W / 2, 105, 52, '#ffd34a', 'center', '#5a2a00');
+  txt('〜 オオカミから にげこめ！ 〜', W / 2, 155, 22, '#fff');
+  const lines = [
+    ['矢印キーで、その方向の家ににげこむ（広場にも出られる）', '#fff'],
+    ['オオカミが点線に着いた瞬間にいる場所で判定！ 直前の変更もOK', '#fff'],
+    ['松明 → わらの家　ノコギリ → 木の家　ハンマー → レンガの家', '#ffb86a'],
+    ['武器に弱い家・広場にいるとアウト　2匹同時なら両方の武器に注意', '#fff'],
+    ['赤いハチマキのオオカミは速いぞ　「ん？」と止まったら地震 → 広場へ', '#9fd8ff'],
+  ];
+  lines.forEach((l, i) => txt(l[0], W / 2, 192 + i * 26, 17, l[1], 'center', null, 'normal'));
+  // 選択（↑↓で行をえらび、← → で切り替え）
+  const rows = [
+    { label: '難易度', opts: DIFF_ORDER.map(k => ({ name: CONFIG.difficulties[k].name, sel: k === G.difficulty, col: { easy: '#5fc46a', normal: '#e8b33a', hard: '#e0544a' }[k] })),
+      note: diff().quake ? '地震あり' : '地震なし' },
+    { label: '家の入れかわり', opts: [{ name: 'なし', sel: !CONFIG.shuffle.enabled, col: '#6f7a86' }, { name: 'あり', sel: CONFIG.shuffle.enabled, col: '#9a5fd0' }],
+      note: CONFIG.shuffle.enabled ? `最初からバラバラ・${CONFIG.shuffle.everySec}秒ごとに家と広場が入れかわる` : 'いつも同じ配置' },
+  ];
+  rows.forEach((row, ri) => {
+    const y = 336 + ri * 78, active = G.titleRow === ri;
+    if (active) { rr(150, y - 8, 660, 70, 14); ctx.fillStyle = 'rgba(255,255,255,0.08)'; ctx.fill(); }
+    txt((active ? '▶ ' : '　') + row.label, 170, y + 18, 18, active ? '#fff' : '#aaa', 'left');
+    const n = row.opts.length, bw = 130, gap = 12, x0 = 360;
+    row.opts.forEach((o, i) => {
+      const bx = x0 + i * (bw + gap), by = y;
+      rr(bx, by, bw, 38, 10); ctx.fillStyle = o.sel ? o.col : 'rgba(255,255,255,0.08)'; ctx.fill();
+      if (o.sel) { ctx.strokeStyle = active ? '#fff' : 'rgba(255,255,255,0.5)'; ctx.lineWidth = active ? 3 : 2; ctx.stroke(); }
+      txt(o.name, bx + bw / 2, by + 19, 19, o.sel ? '#fff' : '#888');
+    });
+    void n;
+    txt(row.note, x0, y + 52, 13, '#bbb', 'left', null, 'normal');
+  });
+  txt('↑↓ で項目をえらぶ　← → で切り替え', W / 2, 490, 14, '#ccc', 'center', null, 'normal');
+  const modeName = G.mode === 'life3' ? `ライフ${CONFIG.lives}` : '一発勝負';
+  txt(`モード: ${modeName}（M で切替）　ベストスコア: ${G.bestScore}${ADMIN.infinite ? '　∞ライフ ON' : ''}`, W / 2, 514, 16, ADMIN.infinite ? '#9fd0ff' : '#ffd34a', 'center', null, 'normal');
+  const blink = Math.floor(G.anim * 2) % 2 === 0;
+  if (blink) txt('スペースキー（またはクリック）でスタート', W / 2, 550, 24, '#fff', 'center', '#000');
+  txt(isFullscreen() ? 'F キー：全画面をやめる' : 'F キー：全画面にする', W / 2, 577, 14, '#ccc', 'center', null, 'normal');
+}
+
+function drawResult() {
+  const a = Math.min(1, G.resultT * 3);
+  ctx.save(); ctx.globalAlpha = a;
+  ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(0, 0, W, H);
+  panel(210, 80, 540, 480);
+  txt(G.cleared ? '5分 生きのびた！' : G.retired ? 'リタイア' : 'ゲームオーバー', W / 2, 140, 44, G.cleared ? '#ffd34a' : G.retired ? '#cfd3da' : '#ff7a6a', 'center', '#000');
+  const st = Math.floor(G.playTime), mm = Math.floor(st / 60), ss = st % 60;
+  const rows = [
+    ['スコア', `${G.score}`],
+    ['生存時間', `${mm}分${String(ss).padStart(2, '0')}秒`],
+    ['はじき返したオオカミ', `${G.repelled}`],
+    ['地震をかわした回数', `${G.quakesDodged}`],
+    ['ベストスコア', `${G.bestScore}${G.newBest ? '  NEW!' : ''}`],
+  ];
+  rows.forEach((r, i) => { txt(r[0], 290, 215 + i * 48, 22, '#ddd', 'left', null, 'normal'); txt(r[1], 670, 215 + i * 48, 26, i === 0 || (i === 4 && G.newBest) ? '#ffd34a' : '#fff', 'right'); });
+  txt(`難易度: ${diff().name}　モード: ${G.mode === 'life3' ? 'ライフ' + CONFIG.lives : '一発勝負'}（M で切替）${CONFIG.shuffle.enabled ? '　入れかわりON' : ''}`, W / 2, 465, 17, '#bbb', 'center', null, 'normal');
+  if (G.resultT > 0.8 && Math.floor(G.anim * 2) % 2 === 0) txt('スペースキーでもう一回！', W / 2, 510, 26, '#fff', 'center', '#000');
+  txt(G.usedInfinite ? '（∞ライフを使ったのでベスト記録には残りません）　Esc でタイトルへ' : 'Esc でタイトルへ', W / 2, 545, 14, '#aaa', 'center', null, 'normal');
+  ctx.restore();
+}
+
+function drawDebug() {
+  const R = G.R; const lines = [`time ${G.time.toFixed(1)} stage ${stageAt(G.time).idx + 1}`];
+  if (R) {
+    lines.push(`hold ${R.hold.toFixed(2)} clock ${R.clock.toFixed(2)} nextQuake ${R.nextQuakeAt === null ? '-' : R.nextQuakeAt.toFixed(1)}`);
+    for (const w of R.wolves) lines.push(`${w.type}${w.sim ? '(同時)' : ''} [${w.weapons.join(',')}] arr ${w.arrival.toFixed(2)}`);
+    if (R.quake) lines.push(`quake t ${R.quake.t.toFixed(2)} / warn ${R.quake.warn.toFixed(2)}`);
+  }
+  ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(W - 330, H - 20 - lines.length * 18, 330, lines.length * 18 + 20);
+  lines.forEach((l, i) => txt(l, W - 320, H - 10 - (lines.length - i) * 18, 13, '#0f0', 'left', null, 'normal'));
+}
+
+/* =====================================================================
+   メインループ
+   ===================================================================== */
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  update(dt); render();
+  requestAnimationFrame(frame);
+}
+cv.focus();
+requestAnimationFrame(frame);
+// 全画面中は Esc キーをゲーム用に使う（Esc で全画面が解除されないようにする。戻すときは F キー）
+// ※ Chrome / Edge の機能。Esc を長押しすると、ブラウザの機能で全画面が解除される
+document.addEventListener('fullscreenchange', () => {
+  const kb = navigator.keyboard;
+  if (!kb || !kb.lock) return;
+  if (document.fullscreenElement) kb.lock(['Escape']).catch(() => {});
+  else kb.unlock();
+});
+</script>
+</body>
+</html>

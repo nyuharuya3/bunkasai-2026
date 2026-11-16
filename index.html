@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>文化祭ゲーム2026</title>
+<style>
+  :root { --bg: #1a1240; --card: #2a1f5c; --line: #7a5cff; --text: #fff; --sub: #d6ccff; --accent: #ffe96b; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; background: var(--bg); color: var(--text);
+    font-family: 'Yu Gothic UI', 'Meiryo', 'Hiragino Sans', sans-serif;
+    padding: 32px 16px;
+  }
+  main { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: clamp(28px, 6vw, 44px); text-align: center; color: var(--accent); margin: 0 0 8px; }
+  .lead { text-align: center; color: var(--sub); margin: 0 0 28px; }
+  ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+  a {
+    display: block; height: 100%; padding: 20px 22px; border-radius: 14px; text-decoration: none; color: var(--text);
+    background: var(--card); border: 2px solid var(--line); transition: transform .1s, border-color .1s;
+  }
+  a:hover, a:focus-visible { transform: translateY(-2px); border-color: var(--accent); outline: none; }
+  .icon { font-size: 36px; line-height: 1; }
+  .name { display: block; font-size: 22px; font-weight: 700; margin: 10px 0 6px; }
+  .desc { display: block; color: var(--sub); font-size: 15px; line-height: 1.6; }
+  .note { margin-top: 28px; text-align: center; color: var(--sub); font-size: 14px; line-height: 1.8; }
+</style>
+</head>
+<body>
+<main>
+  <h1>文化祭ゲーム2026</h1>
+  <p class="lead">あそびたいゲームをえらんでね！</p>
+  <ul>
+    <li><a href="pig/"><span class="icon">🐷</span><span class="name">三匹の子ぶた</span><span class="desc">オオカミから家を守って生きのびよう！</span></a></li>
+    <li><a href="pinball/"><span class="icon">🍊</span><span class="name">みかん丸ピンボール</span><span class="desc">みかんを集めて港をめぐるピンボール！</span></a></li>
+    <li><a href="mirror/"><span class="icon">🔵🔴</span><span class="name">ミラー2匹同時ゴール</span><span class="desc">左右が逆に動く2つの玉を、同時にゴールへ！</span></a></li>
+    <li><a href="mirror2/"><span class="icon">🟢🟠</span><span class="name">さかさま2匹同時ゴール</span><span class="desc">上下も左右も逆！2つの玉を同時にゴールへ！</span></a></li>
+  </ul>
+  <p class="note">パソコンのキーボードであそぶゲームです。<br>ゲーム中に F キーを押すと全画面になります（もう一度 F で元にもどります）。</p>
+</main>
+</body>
+</html>
