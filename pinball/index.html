@@ -3158,8 +3158,14 @@ const TOUCH_CFG = {
     return !!(navigator.standalone || (window.matchMedia && matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches));
   }
   function lockOrient() {
-    try { if (T.orient && screen.orientation && screen.orientation.lock) screen.orientation.lock(T.orient).catch(() => { }); } catch (e) { }
+    try {
+      const o = typeof T.orient === 'function' ? T.orient() : T.orient;
+      if (!screen.orientation) return;
+      if (o && screen.orientation.lock) screen.orientation.lock(o).catch(() => { });
+      else if (!o && screen.orientation.unlock) screen.orientation.unlock();
+    } catch (e) { }
   }
+  T.lockOrient = lockOrient;
   function autoFull() {
     if (document.fullscreenElement || document.webkitFullscreenElement) return;
     if (isApp()) { lockOrient(); return; }
@@ -3171,6 +3177,7 @@ const TOUCH_CFG = {
     } catch (e) { }
   }
   document.addEventListener('pointerup', e => { if (e.pointerType !== 'mouse') autoFull(); });
+  if (isApp()) lockOrient(); // ホーム画面のアプリから開いたときは、最初から向きを固定（時計・電池の表示も一緒に回る）
 
   // ---- スワイプ → 矢印キー ----
   const key = (type, k) => window.dispatchEvent(new KeyboardEvent(type, { key: k, code: k, bubbles: true, cancelable: true }));
