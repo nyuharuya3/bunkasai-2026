@@ -3,6 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="manifest" href="../manifest.webmanifest">
+<meta name="theme-color" content="#000000">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="文化祭ゲーム">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="icon" type="image/png" href="../icon-192.png">
 <title>三匹の子ぶた にげこめ！</title>
 <style>
   html,body{margin:0;height:100%;background:#1d2b1d;overflow:hidden;}
@@ -993,9 +1001,35 @@ cv.addEventListener('mousedown', e => {
     return;
   }
   if (G.state === 'title' && G.rankView) { G.rankView = false; return; }
-  if (G.state === 'title') startGame();
+  if (G.state === 'title') {
+    const r = cv.getBoundingClientRect(), mx = (e.clientX - r.left) / VS, my = (e.clientY - r.top) / VS;
+    if (!titleTap(mx, my)) startGame(); // ボタン以外の場所をタップしたらスタート
+    return;
+  }
   else if (G.state === 'result' && G.resultT > 0.8) startGame();
 });
+
+// タイトル画面のタップ（スマホ用）：難易度・家の入れかわり・モード・ランキング
+// 何かのボタンを押したら true（スタートしない）
+function titleTap(mx, my) {
+  for (let ri = 0; ri < 2; ri++) {
+    const y = 336 + ri * 78, n = ri === 0 ? DIFF_ORDER.length : 2;
+    for (let i = 0; i < n; i++) {
+      const bx = 360 + i * 142; // drawTitle のボタン位置と同じ
+      if (mx >= bx - 5 && mx <= bx + 135 && my >= y - 8 && my <= y + 46) {
+        G.titleRow = ri;
+        if (ri === 0) { const d = i - DIFF_ORDER.indexOf(G.difficulty); if (d) changeDifficulty(d); else SFX.move(); }
+        else if ((i === 1) !== CONFIG.shuffle.enabled) toggleRotate();
+        else SFX.move();
+        return true;
+      }
+    }
+    if (mx >= 150 && mx <= 810 && my >= y - 8 && my <= y + 62) { G.titleRow = ri; SFX.move(); return true; } // 行の中のすき間
+  }
+  if (mx >= 150 && mx <= 810 && my >= 478 && my <= 502) { G.rankView = true; rankNet.lastAt = -1e9; SFX.move(); return true; } // ランキングの行
+  if (mx >= 150 && mx <= 810 && my >= 503 && my <= 528) { toggleMode(); return true; } // モードの行
+  return false;
+}
 
 /* =====================================================================
    描画
@@ -1512,12 +1546,13 @@ function drawTitle() {
     void n;
     txt(row.note, x0, y + 52, 13, '#bbb', 'left', null, 'normal');
   });
-  txt('↑↓ で項目をえらぶ　← → で切り替え　R：ランキングを見る', W / 2, 490, 14, '#ccc', 'center', null, 'normal');
+  const touchUI = !!(window.matchMedia && matchMedia('(pointer: coarse)').matches);
+  txt(touchUI ? 'ボタンをタップしてえらぶ　ここをタップ：ランキングを見る' : '↑↓ で項目をえらぶ　← → で切り替え　R：ランキングを見る', W / 2, 490, 14, '#ccc', 'center', null, 'normal');
   const modeName = modeLabel(G.mode);
   const top = rankList(curRankKey())[0];
-  txt(`モード: ${modeName}（M で切替）　この設定の1位: ${top ? fmtSurv(top.t) + (top.c ? '★' : '') : 'まだなし'}${ADMIN.infinite ? '　∞ライフ ON' : ''}`, W / 2, 514, 16, ADMIN.infinite ? '#9fd0ff' : '#ffd34a', 'center', null, 'normal');
+  txt(`モード: ${modeName}（${touchUI ? 'タップ' : 'M'} で切替）　この設定の1位: ${top ? fmtSurv(top.t) + (top.c ? '★' : '') : 'まだなし'}${ADMIN.infinite ? '　∞ライフ ON' : ''}`, W / 2, 514, 16, ADMIN.infinite ? '#9fd0ff' : '#ffd34a', 'center', null, 'normal');
   const blink = Math.floor(G.anim * 2) % 2 === 0;
-  if (blink) txt('スペースキー（またはクリック）でスタート', W / 2, 550, 24, '#fff', 'center', '#000');
+  if (blink) txt(touchUI ? 'ボタン以外の場所をタップでスタート' : 'スペースキー（またはクリック）でスタート', W / 2, 550, 24, '#fff', 'center', '#000');
   txt(isFullscreen() ? 'F キー：全画面をやめる' : 'F キー：全画面にする', W / 2, 577, 14, '#ccc', 'center', null, 'normal');
 }
 
@@ -1592,6 +1627,7 @@ document.addEventListener('fullscreenchange', () => {
 });
 
 const TOUCH_CFG = {
+  orient: null, // Android の全画面のときに固定する向き
   lockScroll: true, swipe: true, useMenu: false, // 一時停止画面のボタン（つづける・全画面・リタイア）はタップでそのまま押せる
   audio: () => initAudio(),
   tap: null, // タップはもともとのクリック操作（スタート・もう一回）
@@ -1647,6 +1683,27 @@ const TOUCH_CFG = {
     menu.style.display = touchMode && open && T.useMenu ? 'flex' : 'none';
     requestAnimationFrame(tick);
   })();
+
+  // ---- スマホのブラウザのバー（アドレス・共有など）を消す ----
+  // ・Android：さわったときに全画面にする（向きも固定）
+  // ・iPhone：全画面にできないので、ホーム画面に追加して開いてもらう
+  function isApp() {
+    return !!(navigator.standalone || (window.matchMedia && matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches));
+  }
+  function lockOrient() {
+    try { if (T.orient && screen.orientation && screen.orientation.lock) screen.orientation.lock(T.orient).catch(() => { }); } catch (e) { }
+  }
+  function autoFull() {
+    if (document.fullscreenElement || document.webkitFullscreenElement) return;
+    if (isApp()) { lockOrient(); return; }
+    const el = document.documentElement, req = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (!req) return; // iPhone など
+    try {
+      const pr = req.call(el, { navigationUI: 'hide' });
+      if (pr && pr.then) pr.then(lockOrient).catch(() => { });
+    } catch (e) { }
+  }
+  document.addEventListener('pointerup', e => { if (e.pointerType !== 'mouse') autoFull(); });
 
   // ---- スワイプ → 矢印キー ----
   const key = (type, k) => window.dispatchEvent(new KeyboardEvent(type, { key: k, code: k, bubbles: true, cancelable: true }));
