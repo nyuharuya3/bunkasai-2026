@@ -3,6 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#000000">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="文化祭ゲーム">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" href="icon-192.png">
 <title>文化祭ゲーム2026</title>
 <style>
   :root { --bg: #1a1240; --card: #2a1f5c; --line: #7a5cff; --text: #fff; --sub: #d6ccff; --accent: #ffe96b; }
@@ -25,6 +33,9 @@
   .name { display: block; font-size: 22px; font-weight: 700; margin: 10px 0 6px; }
   .desc { display: block; color: var(--sub); font-size: 15px; line-height: 1.6; }
   .note { margin-top: 28px; text-align: center; color: var(--sub); font-size: 14px; line-height: 1.8; }
+  .howto { margin: 18px auto 0; max-width: 560px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; color: var(--sub); font-size: 14px; line-height: 1.8; }
+  .howto summary { cursor: pointer; color: var(--text); font-weight: 700; }
+  .howto p { margin: 10px 0 0; }
 </style>
 </head>
 <body>
@@ -37,7 +48,13 @@
     <li><a href="mirror/"><span class="icon">🔵🔴</span><span class="name">ミラー2匹同時ゴール</span><span class="desc">左右が逆に動く2つの玉を、同時にゴールへ！</span></a></li>
     <li><a href="mirror2/"><span class="icon">🟢🟠</span><span class="name">さかさま2匹同時ゴール</span><span class="desc">上下も左右も逆！2つの玉を同時にゴールへ！</span></a></li>
   </ul>
-  <p class="note">パソコンのキーボードであそぶゲームです。<br>ゲーム中に F キーを押すと全画面になります（もう一度 F で元にもどります）。</p>
+  <p class="note">パソコンでは、ゲーム中に F キーで全画面になります（もう一度 F で元にもどります）。<br>
+  スマホでは、画面をなぞって（スワイプして）あそびます。</p>
+  <details class="howto">
+    <summary>📱 スマホで、上や下のバーを消して遊ぶには</summary>
+    <p><b>iPhone（Safari）</b>：下の <b>共有ボタン（□に↑）</b> →「<b>ホーム画面に追加</b>」→「<b>追加</b>」。ホーム画面にできた「文化祭ゲーム」から開くと、バーなしで遊べます。</p>
+    <p><b>Android（Chrome）</b>：ゲームの画面にさわると、自動で全画面になります。右上の <b>︙</b> →「<b>ホーム画面に追加</b>」から開くこともできます。</p>
+  </details>
 </main>
 </body>
 </html>
