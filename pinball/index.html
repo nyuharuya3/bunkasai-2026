@@ -3,6 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<link rel="manifest" href="../manifest.webmanifest">
+<meta name="theme-color" content="#000000">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="文化祭ゲーム">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="icon" type="image/png" href="../icon-192.png">
   <title>みかん丸 ピンボール航海記</title>
   <style>
 * { box-sizing: border-box; }
@@ -3088,6 +3096,7 @@ document.addEventListener('fullscreenchange', () => {
 
 let touchPaused = false; // スマホの ⏸ ボタンで止めているか
 const TOUCH_CFG = {
+  orient: 'portrait', // Android の全画面のときに固定する向き
   lockScroll: false, swipe: false, useMenu: true,
   showPause: () => state === 'play',
   menuOpen: () => touchPaused,
@@ -3141,6 +3150,27 @@ const TOUCH_CFG = {
     menu.style.display = touchMode && open && T.useMenu ? 'flex' : 'none';
     requestAnimationFrame(tick);
   })();
+
+  // ---- スマホのブラウザのバー（アドレス・共有など）を消す ----
+  // ・Android：さわったときに全画面にする（向きも固定）
+  // ・iPhone：全画面にできないので、ホーム画面に追加して開いてもらう
+  function isApp() {
+    return !!(navigator.standalone || (window.matchMedia && matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches));
+  }
+  function lockOrient() {
+    try { if (T.orient && screen.orientation && screen.orientation.lock) screen.orientation.lock(T.orient).catch(() => { }); } catch (e) { }
+  }
+  function autoFull() {
+    if (document.fullscreenElement || document.webkitFullscreenElement) return;
+    if (isApp()) { lockOrient(); return; }
+    const el = document.documentElement, req = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (!req) return; // iPhone など
+    try {
+      const pr = req.call(el, { navigationUI: 'hide' });
+      if (pr && pr.then) pr.then(lockOrient).catch(() => { });
+    } catch (e) { }
+  }
+  document.addEventListener('pointerup', e => { if (e.pointerType !== 'mouse') autoFull(); });
 
   // ---- スワイプ → 矢印キー ----
   const key = (type, k) => window.dispatchEvent(new KeyboardEvent(type, { key: k, code: k, bubbles: true, cancelable: true }));
