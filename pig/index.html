@@ -21,6 +21,36 @@
 <body>
 <canvas id="c" tabindex="0"></canvas>
 <script>
+// ============================================================
+//  スマホを縦に持っているときは、ゲーム画面を時計回りに90度まわして横向きで表示する（横向きだけ）
+// ============================================================
+function gameRotated() {
+  return !!(window.matchMedia && matchMedia('(pointer: coarse)').matches) && window.innerHeight > window.innerWidth;
+}
+function gameViewW() { return gameRotated() ? window.innerHeight : window.innerWidth; }
+function gameViewH() { return gameRotated() ? window.innerWidth : window.innerHeight; }
+// 画面上の座標 → 要素の中の座標（回しているときは逆回転して計算）
+function gameLocalXY(el, cx, cy) {
+  const r = el.getBoundingClientRect();
+  return gameRotated() ? { x: cy - r.top, y: r.right - cx } : { x: cx - r.left, y: cy - r.top };
+}
+function applyGameRotation() {
+  const b = document.body; if (!b) return;
+  const rot = gameRotated();
+  document.documentElement.classList.toggle('game-rotated', rot);
+  if (rot) {
+    Object.assign(b.style, { position: 'fixed', top: '0', left: '0', margin: '0',
+      width: window.innerHeight + 'px', height: window.innerWidth + 'px',
+      transformOrigin: '0 0', transform: `translateX(${window.innerWidth}px) rotate(90deg)` });
+  } else {
+    for (const k of ['position', 'top', 'left', 'margin', 'width', 'height', 'transformOrigin', 'transform']) b.style[k] = '';
+  }
+}
+applyGameRotation();
+window.addEventListener('resize', applyGameRotation);
+window.addEventListener('orientationchange', () => setTimeout(() => { applyGameRotation(); window.dispatchEvent(new Event('resize')); }, 300));
+</script>
+<script>
 /* =====================================================================
    ★ 設定（ここの数字を変えると難易度を調整できます）
    ===================================================================== */
@@ -994,7 +1024,7 @@ cv.addEventListener('mousedown', e => {
   initAudio(); cv.focus();
   if (ADMIN.open) return;
   if (G.state === 'play' && G.paused) {
-    const r = cv.getBoundingClientRect(), mx = (e.clientX - r.left) / VS, my = (e.clientY - r.top) / VS;
+    const lp = gameLocalXY(cv, e.clientX, e.clientY), mx = lp.x / VS, my = lp.y / VS;
     if (inBtn(BTN_RESUME, mx, my)) G.paused = false;
     else if (inBtn(BTN_FULL, mx, my)) toggleFullscreen();
     else if (inBtn(BTN_RETIRE, mx, my)) retire();
@@ -1002,7 +1032,7 @@ cv.addEventListener('mousedown', e => {
   }
   if (G.state === 'title' && G.rankView) { G.rankView = false; return; }
   if (G.state === 'title') {
-    const r = cv.getBoundingClientRect(), mx = (e.clientX - r.left) / VS, my = (e.clientY - r.top) / VS;
+    const lp = gameLocalXY(cv, e.clientX, e.clientY), mx = lp.x / VS, my = lp.y / VS;
     if (!titleTap(mx, my)) startGame(); // ボタン以外の場所をタップしたらスタート
     return;
   }
@@ -1038,7 +1068,7 @@ const ctx = cv.getContext('2d');
 let VS = 1, DPR = 1;
 function resize() {
   DPR = window.devicePixelRatio || 1;
-  VS = Math.min(window.innerWidth / W, window.innerHeight / H);
+  VS = Math.min(gameViewW() / W, gameViewH() / H);
   cv.style.width = W * VS + 'px'; cv.style.height = H * VS + 'px';
   cv.width = Math.round(W * VS * DPR); cv.height = Math.round(H * VS * DPR);
 }
@@ -1627,7 +1657,7 @@ document.addEventListener('fullscreenchange', () => {
 });
 
 const TOUCH_CFG = {
-  orient: null, // Android の全画面のときに固定する向き
+  orient: 'landscape-primary', // Android の全画面・アプリのときに固定する向き（時計回りに回した表示と同じ持ち方）
   lockScroll: true, swipe: true, useMenu: false, // 一時停止画面のボタン（つづける・全画面・リタイア）はタップでそのまま押せる
   audio: () => initAudio(),
   tap: null, // タップはもともとのクリック操作（スタート・もう一回）
@@ -1691,8 +1721,14 @@ const TOUCH_CFG = {
     return !!(navigator.standalone || (window.matchMedia && matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches));
   }
   function lockOrient() {
-    try { if (T.orient && screen.orientation && screen.orientation.lock) screen.orientation.lock(T.orient).catch(() => { }); } catch (e) { }
+    try {
+      const o = typeof T.orient === 'function' ? T.orient() : T.orient;
+      if (!screen.orientation) return;
+      if (o && screen.orientation.lock) screen.orientation.lock(o).catch(() => { });
+      else if (!o && screen.orientation.unlock) screen.orientation.unlock();
+    } catch (e) { }
   }
+  T.lockOrient = lockOrient;
   function autoFull() {
     if (document.fullscreenElement || document.webkitFullscreenElement) return;
     if (isApp()) { lockOrient(); return; }
@@ -1704,6 +1740,7 @@ const TOUCH_CFG = {
     } catch (e) { }
   }
   document.addEventListener('pointerup', e => { if (e.pointerType !== 'mouse') autoFull(); });
+  if (isApp()) lockOrient(); // ホーム画面のアプリから開いたときは、最初から向きを固定（時計・電池の表示も一緒に回る）
 
   // ---- スワイプ → 矢印キー ----
   const key = (type, k) => window.dispatchEvent(new KeyboardEvent(type, { key: k, code: k, bubbles: true, cancelable: true }));
@@ -1719,7 +1756,8 @@ const TOUCH_CFG = {
   }, { passive: true });
   document.addEventListener('pointermove', e => {
     if (!sw || e.pointerId !== sw.id) return;
-    const dx = e.clientX - sw.x, dy = e.clientY - sw.y, ax = Math.abs(dx), ay = Math.abs(dy);
+    const sx = e.clientX - sw.x, sy = e.clientY - sw.y, rot = gameRotated();
+    const dx = rot ? sy : sx, dy = rot ? -sx : sy, ax = Math.abs(dx), ay = Math.abs(dy); // 回している画面では向きを変換
     if (Math.max(ax, ay) < TH) return;
     if (sw.dir && Math.max(ax, ay) < Math.min(ax, ay) * 1.5) return; // 斜めっぽいときは向きを変えない
     const dir = ax > ay ? (dx > 0 ? 'ArrowRight' : 'ArrowLeft') : (dy > 0 ? 'ArrowDown' : 'ArrowUp');
