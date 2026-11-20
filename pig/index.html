@@ -1657,6 +1657,7 @@ document.addEventListener('fullscreenchange', () => {
 });
 
 const TOUCH_CFG = {
+  showHome: () => G.state === 'title' && !G.rankView && !ADMIN.open, // 「メニューへ」ボタンを出す画面
   orient: 'landscape-primary', // Android の全画面・アプリのときに固定する向き（時計回りに回した表示と同じ持ち方）
   lockScroll: true, swipe: true, useMenu: false, // 一時停止画面のボタン（つづける・全画面・リタイア）はタップでそのまま押せる
   audio: () => initAudio(),
@@ -1700,6 +1701,14 @@ const TOUCH_CFG = {
     <button class="resume">▶ つづける</button><button class="retire">リタイア</button></div>`;
   document.body.appendChild(menu);
 
+  // 「← メニュー」ボタン：ゲーム選択ページへ（インストールしたアプリなら全画面のまま）
+  const homeBtn = document.createElement('a');
+  homeBtn.id = 'tcHome'; homeBtn.className = 'tc-ui'; homeBtn.href = '../index.html'; homeBtn.textContent = '← メニュー';
+  homeBtn.style.cssText = 'position:fixed;top:max(10px,env(safe-area-inset-top));left:max(10px,env(safe-area-inset-left));z-index:50;display:none;' +
+    'padding:9px 15px;border-radius:12px;border:2px solid rgba(255,255,255,.85);background:rgba(0,0,0,.55);color:#fff;' +
+    'font-size:16px;font-weight:800;text-decoration:none;cursor:pointer;touch-action:manipulation;';
+  document.body.appendChild(homeBtn);
+
   let touchMode = window.matchMedia && matchMedia('(pointer: coarse)').matches;
   const tapAudio = () => { try { T.audio && T.audio(); } catch (e) { } };
   pauseBtn.addEventListener('click', e => { e.preventDefault(); tapAudio(); T.pause(); });
@@ -1708,6 +1717,7 @@ const TOUCH_CFG = {
 
   // ボタンの表示・非表示
   (function tick() {
+    homeBtn.style.display = T.showHome && T.showHome() ? 'block' : 'none';
     const open = !!(T.menuOpen && T.menuOpen());
     pauseBtn.style.display = touchMode && !open && T.showPause() ? 'flex' : 'none';
     menu.style.display = touchMode && open && T.useMenu ? 'flex' : 'none';
