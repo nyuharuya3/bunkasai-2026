@@ -42,6 +42,10 @@
     touch-action: manipulation;
   }
   #fsBtn:hover, #fsBtn:focus-visible { background: var(--accent); color: var(--bg); outline: none; }
+  /* ゲームはこの枠の中で開く（ページを移らないので、全画面のまま） */
+  #gameFrame { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; z-index: 100; background: #000; display: none; }
+  html.playing, html.playing body { overflow: hidden; }
+  html.playing #gameFrame { display: block; }
 </style>
 </head>
 <body>
@@ -98,6 +102,66 @@
   document.addEventListener('fullscreenchange', update);
   document.addEventListener('webkitfullscreenchange', update);
   update();
+
+  // ---- ゲームをこのページの中の枠で開く（全画面のまま、メニューとゲームを行き来できる） ----
+  const frame = document.createElement('iframe');
+  frame.id = 'gameFrame';
+  frame.setAttribute('allow', 'fullscreen; autoplay; gamepad; screen-wake-lock');
+  document.body.appendChild(frame);
+  const fullListeners = [];
+  function onFull() {
+    // 全画面中は Esc をゲーム用に使う（全画面をやめるのは F キー）
+    const kb = navigator.keyboard;
+    if (kb && kb.lock) { if (isFull()) kb.lock(['Escape']).catch(() => { }); else kb.unlock(); }
+    fullListeners.forEach(f => { try { f(); } catch (e) { } });
+  }
+  document.addEventListener('fullscreenchange', onFull);
+  document.addEventListener('webkitfullscreenchange', onFull);
+
+  function lockOrient(o) {
+    try {
+      if (!screen.orientation) return;
+      if (o && screen.orientation.lock) screen.orientation.lock(o).catch(() => { });
+      else if (!o && screen.orientation.unlock) screen.orientation.unlock();
+    } catch (e) { }
+  }
+  function openGame(href, push) {
+    frame.src = href;
+    document.documentElement.classList.add('playing');
+    if (push) history.pushState({ game: href }, '');
+    frame.onload = () => { try { frame.contentWindow.focus(); } catch (e) { } };
+  }
+  function closeGame(fromHistory) {
+    if (!document.documentElement.classList.contains('playing')) return;
+    document.documentElement.classList.remove('playing');
+    frame.src = 'about:blank';
+    fullListeners.length = 0;
+    if (isApp() || isFull()) lockOrient(null); // メニューでは向きを自由に
+    if (!fromHistory && history.state && history.state.game) history.back();
+    window.focus();
+  }
+  // ゲームの中から呼ばれる（ゲーム側の MENU_HOST）
+  window.bunkaMenu = {
+    isFull: () => isApp() || isFull(),
+    toggleFull: () => { if (isApp()) return; isFull() ? exit() : enter(); },
+    enterFull: (then) => {
+      if (isApp() || isFull()) { if (then) then(); return; }
+      if (!req) return;
+      try { const pr = req.call(el, { navigationUI: 'hide' }); if (pr && pr.then) pr.then(() => then && then()).catch(() => { }); } catch (e) { }
+    },
+    lockOrient,
+    onFullChange: f => fullListeners.push(f),
+    close: () => closeGame(false),
+  };
+  document.querySelectorAll('main ul a').forEach(a => {
+    a.addEventListener('click', e => {
+      if (e.ctrlKey || e.metaKey || e.shiftKey || e.button !== 0) return; // 新しいタブで開くときはそのまま
+      e.preventDefault();
+      openGame(a.getAttribute('href') + 'index.html', true);
+    });
+  });
+  // スマホの「戻る」でメニューにもどる
+  window.addEventListener('popstate', () => closeGame(true));
 })();
 </script>
 </body>
