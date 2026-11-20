@@ -11,6 +11,11 @@
 <meta name="apple-mobile-web-app-title" content="文化祭ゲーム">
 <link rel="apple-touch-icon" href="../apple-touch-icon.png">
 <link rel="icon" type="image/png" href="../icon-192.png">
+<script>
+// メニュー画面の中（全画面のまま）で開かれているときは、全画面・画面の向きをメニュー側にまかせる
+var MENU_HOST = null;
+try { if (window.parent !== window && window.parent.bunkaMenu) MENU_HOST = window.parent.bunkaMenu; } catch (e) { }
+</script>
 <title>さかさま2匹同時ゴール</title>
 <style>
   html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
@@ -1469,9 +1474,10 @@ window.addEventListener('keydown', e => {
     ignoreAny: IGNORE_ANY.test(e.code) || e.code === '' });
 });
 // 全画面表示の切り替え
-function isFullscreen() { return !!(document.fullscreenElement || document.webkitFullscreenElement); }
+function isFullscreen() { if (MENU_HOST) return MENU_HOST.isFull(); return !!(document.fullscreenElement || document.webkitFullscreenElement); }
 function toggleFullscreen() {
   try {
+    if (MENU_HOST) MENU_HOST.toggleFull(); else
     if (isFullscreen()) { (document.exitFullscreen || document.webkitExitFullscreen).call(document); }
     else { const el = document.documentElement; (el.requestFullscreen || el.webkitRequestFullscreen).call(el); }
   } catch (e) { }
@@ -2196,6 +2202,8 @@ const TOUCH_CFG = {
     'padding:9px 15px;border-radius:12px;border:2px solid rgba(255,255,255,.85);background:rgba(0,0,0,.55);color:#fff;' +
     'font-size:16px;font-weight:800;text-decoration:none;cursor:pointer;touch-action:manipulation;';
   document.body.appendChild(homeBtn);
+  // メニュー画面の中で開いているときは、ページを移らずにメニューへもどる（全画面のまま）
+  homeBtn.addEventListener('click', e => { if (MENU_HOST) { e.preventDefault(); MENU_HOST.close(); } });
 
   let touchMode = window.matchMedia && matchMedia('(pointer: coarse)').matches;
   const tapAudio = () => { try { T.audio && T.audio(); } catch (e) { } };
@@ -2221,6 +2229,7 @@ const TOUCH_CFG = {
   function lockOrient() {
     try {
       const o = typeof T.orient === 'function' ? T.orient() : T.orient;
+      if (MENU_HOST) { MENU_HOST.lockOrient(o); return; }
       if (!screen.orientation) return;
       if (o && screen.orientation.lock) screen.orientation.lock(o).catch(() => { });
       else if (!o && screen.orientation.unlock) screen.orientation.unlock();
@@ -2228,6 +2237,7 @@ const TOUCH_CFG = {
   }
   T.lockOrient = lockOrient;
   function autoFull() {
+    if (MENU_HOST) { MENU_HOST.enterFull(lockOrient); return; } // メニュー側を全画面にする
     if (document.fullscreenElement || document.webkitFullscreenElement) return;
     if (isApp()) { lockOrient(); return; }
     const el = document.documentElement, req = el.requestFullscreen || el.webkitRequestFullscreen;
@@ -2238,7 +2248,7 @@ const TOUCH_CFG = {
     } catch (e) { }
   }
   document.addEventListener('pointerup', e => { if (e.pointerType !== 'mouse') autoFull(); });
-  if (isApp()) lockOrient(); // ホーム画面のアプリから開いたときは、最初から向きを固定（時計・電池の表示も一緒に回る）
+  if (isApp() || (MENU_HOST && MENU_HOST.isFull())) lockOrient(); // ホーム画面のアプリから開いたときは、最初から向きを固定（時計・電池の表示も一緒に回る）
 
   // ---- スワイプ → 矢印キー ----
   const key = (type, k) => window.dispatchEvent(new KeyboardEvent(type, { key: k, code: k, bubbles: true, cancelable: true }));
