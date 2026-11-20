@@ -138,7 +138,12 @@
     fullListeners.length = 0;
     if (isApp() || isFull()) lockOrient(null); // メニューでは向きを自由に
     if (!fromHistory && history.state && history.state.game) history.back();
+    // キーボードの入力をメニュー側にもどす（ゲームの枠に残ったままだと F キーが効かない）
+    try { frame.blur(); } catch (e) { }
     window.focus();
+    document.body.setAttribute('tabindex', '-1');
+    document.body.focus({ preventScroll: true });
+    setTimeout(() => { if (document.activeElement === frame) document.body.focus({ preventScroll: true }); }, 50);
   }
   // ゲームの中から呼ばれる（ゲーム側の MENU_HOST）
   window.bunkaMenu = {
