@@ -36,19 +36,26 @@
   .howto { margin: 18px auto 0; max-width: 560px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; color: var(--sub); font-size: 14px; line-height: 1.8; }
   .howto summary { cursor: pointer; color: var(--text); font-weight: 700; }
   .howto p { margin: 10px 0 0; }
+  #fsBtn {
+    display: block; margin: 0 auto 22px; padding: 12px 22px; border-radius: 999px; border: 2px solid var(--accent);
+    background: transparent; color: var(--accent); font-size: 17px; font-weight: 700; font-family: inherit; cursor: pointer;
+    touch-action: manipulation;
+  }
+  #fsBtn:hover, #fsBtn:focus-visible { background: var(--accent); color: var(--bg); outline: none; }
 </style>
 </head>
 <body>
 <main>
   <h1>文化祭ゲーム2026</h1>
   <p class="lead">あそびたいゲームをえらんでね！</p>
+  <button id="fsBtn" type="button">⛶ 全画面にする</button>
   <ul>
     <li><a href="pig/"><span class="icon">🐷</span><span class="name">三匹の子ぶた</span><span class="desc">オオカミから家を守って生きのびよう！</span></a></li>
     <li><a href="pinball/"><span class="icon">🍊</span><span class="name">みかん丸ピンボール</span><span class="desc">みかんを集めて港をめぐるピンボール！</span></a></li>
     <li><a href="mirror/"><span class="icon">🔵🔴</span><span class="name">ミラー2匹同時ゴール</span><span class="desc">左右が逆に動く2つの玉を、同時にゴールへ！</span></a></li>
     <li><a href="mirror2/"><span class="icon">🟢🟠</span><span class="name">さかさま2匹同時ゴール</span><span class="desc">上下も左右も逆！2つの玉を同時にゴールへ！</span></a></li>
   </ul>
-  <p class="note">パソコンでは、ゲーム中に F キーで全画面になります（もう一度 F で元にもどります）。<br>
+  <p class="note">パソコンでは、F キーで全画面になります（もう一度 F で元にもどります）。<br>
   スマホでは、画面をなぞって（スワイプして）あそびます。</p>
   <details class="howto">
     <summary>📱 スマホで、上や下のバーを消して遊ぶには</summary>
@@ -56,5 +63,42 @@
     <p><b>Android（Chrome）</b>：ゲームの画面にさわると、自動で全画面になります。右上の <b>︙</b> →「<b>ホーム画面に追加</b>」から開くこともできます。</p>
   </details>
 </main>
+<script>
+// ---- メニュー画面の全画面（ボタン・F キー・スマホはさわると自動） ----
+(function () {
+  const btn = document.getElementById('fsBtn');
+  const el = document.documentElement;
+  const req = el.requestFullscreen || el.webkitRequestFullscreen;
+  function isApp() {
+    return !!(navigator.standalone || (window.matchMedia && matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches));
+  }
+  function isFull() { return !!(document.fullscreenElement || document.webkitFullscreenElement); }
+  function enter() {
+    if (isFull() || !req) return;
+    try { const pr = req.call(el, { navigationUI: 'hide' }); if (pr && pr.catch) pr.catch(() => { }); } catch (e) { }
+  }
+  function exit() {
+    const ex = document.exitFullscreen || document.webkitExitFullscreen;
+    if (isFull() && ex) { try { const pr = ex.call(document); if (pr && pr.catch) pr.catch(() => { }); } catch (e) { } }
+  }
+  function update() {
+    // アプリとして開いているときや、全画面にできない（iPhone など）ときはボタンを出さない
+    if (isApp() || !req) { btn.style.display = 'none'; return; }
+    btn.style.display = 'block';
+    btn.textContent = isFull() ? '⛶ 全画面をやめる' : '⛶ 全画面にする';
+  }
+  btn.addEventListener('click', () => { isFull() ? exit() : enter(); });
+  document.addEventListener('keydown', e => {
+    if ((e.key === 'f' || e.key === 'F') && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); isFull() ? exit() : enter(); }
+  });
+  // スマホ：画面にさわったら全画面（ゲームと同じ）
+  document.addEventListener('pointerup', e => {
+    if (e.pointerType !== 'mouse' && e.target !== btn && !isApp()) enter();
+  });
+  document.addEventListener('fullscreenchange', update);
+  document.addEventListener('webkitfullscreenchange', update);
+  update();
+})();
+</script>
 </body>
 </html>
