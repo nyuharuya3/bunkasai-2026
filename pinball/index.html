@@ -359,6 +359,12 @@ h1 {
   box-shadow: 0 4px 0 #9a4a0a;
 }
 #startBtn:active { transform: translateY(3px); box-shadow: 0 1px 0 #9a4a0a; }
+#easyBtn {
+  display: block; margin: 14px auto 0; font-size: 16px; font-weight: bold; padding: 9px 26px;
+  border: 3px solid #3aa35b; border-radius: 40px; background: #fff; color: #2d8a4a; cursor: pointer;
+}
+#easyBtn:active { transform: translateY(2px); }
+#easyNote { margin: 6px 0 0; font-size: 12px; color: #777; }
 
 #retireBtn, #fsBtn {
   font-size: 13px;
@@ -516,6 +522,8 @@ html.phone-layout #sceneWrap, html.phone-layout #bottom, html.phone-layout #stri
         </ul>
       </div>
       <button id="startBtn">出航する！</button>
+      <button id="easyBtn">🌈 のんびり出航（じゃまものなし）</button>
+      <p id="easyNote">カニ・カモメ・ネズミ・波などのじゃまものが出ない、れんしゅう用のモード（パソコンは N キー）</p>
     </div>
   </div>
 
@@ -974,7 +982,7 @@ const seagull = { mode: 'away', x: GULL_OUT.x, y: GULL_OUT.y, aim: 0, rest: 0, t
 
 // カモメの町の、ひとつ前の町を出てから次の町に着くまでの間はカモメがいる
 function gullTownNow() {
-  if (introT > 0) return false;
+  if (easyMode || introT > 0) return false;
   const i = currentSegment();
   return GULL_TOWNS.includes(ROUTE[i].name) || (i + 1 < ROUTE.length && GULL_TOWNS.includes(ROUTE[i + 1].name));
 }
@@ -1091,7 +1099,7 @@ function slopePoint(u) {
 }
 
 function ratTownNow() {
-  if (introT > 0) return false;
+  if (easyMode || introT > 0) return false;
   const i = currentSegment();
   return RAT_TOWNS.includes(ROUTE[i].name) || (i + 1 < ROUTE.length && RAT_TOWNS.includes(ROUTE[i + 1].name));
 }
@@ -1212,7 +1220,7 @@ let tunaMurk = 0;        // 海のにごり（0〜1）。マグロがいる間�
 const bubbles = [];
 
 function tunaTownNow() {
-  if (introT > 0) return false;
+  if (easyMode || introT > 0) return false;
   const i = currentSegment();
   return TUNA_TOWNS.includes(ROUTE[i].name) || (i + 1 < ROUTE.length && TUNA_TOWNS.includes(ROUTE[i + 1].name));
 }
@@ -1318,8 +1326,9 @@ const TOWN_EVENTS = {
 const evFade = {};          // イベントごとの強さ（0〜1）。ふわっと始まって、ふわっと終わる
 let evTown = null;          // いまイベントが起きている町
 
+let easyMode = false;  // のんびりモード（じゃまものなし）
 function eventTownNow() {
-  if (introT > 0 || state !== 'play') return null;
+  if (easyMode || introT > 0 || state !== 'play') return null;
   const i = currentSegment(), f = segmentFrac(i);
   const ti = i >= ROUTE.length - 1 || f < 0.5 ? i : i + 1;
   return TOWN_EVENTS[ROUTE[ti].name] ? ROUTE[ti].name : null;
@@ -2824,7 +2833,8 @@ const overlay = document.getElementById('overlay');
 const testPanel = document.getElementById('testPanel');
 let testMode = false;
 
-function startGame(test) {
+function startGame(test, easy) {
+  easyMode = easy === true;
   if (!actx) {
     try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { actx = null; }
   }
@@ -2836,7 +2846,7 @@ function startGame(test) {
   jingle([523, 659, 784]);
   introT = INTRO_TIME;
   missionT = 0;
-  showToast('⛵ 東京理科大学から出航！', '神田川を下って東京湾へ…');
+  showToast('⛵ 東京理科大学から出航！', easyMode ? 'のんびりモード：じゃまものは出ないよ' : '神田川を下って東京湾へ…');
 }
 
 function endGame(result) {  // result: 'clear' / 'over' / 'retire'
@@ -2852,7 +2862,7 @@ function endGame(result) {  // result: 'clear' / 'over' / 'retire'
   const here = [...ROUTE].reverse().find(s => mikan >= s.d);
   const rest = `<p>集めたミカン <b>${mikan}個</b>（飯田橋まであと ${Math.max(0, GOAL - mikan)}個）</p>`;
   const titles = { clear: '🎉 東京理科大学に到着！', over: '⚓ 航海終了', retire: '🏳 リタイア' };
-  document.getElementById('ovTitle').textContent = titles[result] + (testMode ? '（テスト）' : '');
+  document.getElementById('ovTitle').textContent = titles[result] + (testMode ? '（テスト）' : '') + (easyMode ? '（のんびり）' : '');
   document.getElementById('ovBody').innerHTML =
     result === 'clear'
       ? `<p>みかん丸は長万部から飯田橋の東京理科大学まで帰ってきた！<br>集めたミカン <b>${mikan}個</b><br>残りの球 <b>${balls}個</b></p><p>長い航海、おつかれさま！🍊</p>`
@@ -2860,6 +2870,7 @@ function endGame(result) {  // result: 'clear' / 'over' / 'retire'
       ? `<p>航海をとちゅうでやめました。<br>みかん丸は <b>${here.name}</b> の近くまで進んだ！</p>${rest}`
       : `<p>球がなくなってしまった…<br>みかん丸は <b>${here.name}</b> の近くまで進んだ！</p>${rest}`;
   document.getElementById('startBtn').textContent = 'もう一度出航する！';
+  document.getElementById('easyBtn').textContent = '🌈 のんびりでもう一度（じゃまものなし）';
   overlay.classList.remove('hidden');
   if (result === 'clear') jingle([523, 659, 784, 1047, 784, 1047, 1319], 0.14);
 }
@@ -2878,6 +2889,7 @@ function releaseInputs() {
 }
 
 document.getElementById('startBtn').addEventListener('click', () => startGame(false));
+document.getElementById('easyBtn').addEventListener('click', () => startGame(false, true));
 document.getElementById('tpRestart').addEventListener('click', () => startGame(true));
 
 // F2で管理者メニュー（テストモードの操作）を開け閉めする
@@ -2960,7 +2972,7 @@ function setFlipper(side, on, auto = false) {
   if (on && (f.brokenT > 0 || f.clampT > 0)) { f.pressed = false; return; }  // こわれている・カニにはさまれている間は動かない
   if (on && !f.pressed && state === 'play') {
     beep(120, 0.03, 'square', 0.03);
-    if (!auto && !ballNearFlipper(f)) {
+    if (!auto && !easyMode && !ballNearFlipper(f)) {  // のんびりモードでは連打してもこわれない
       f.presses = f.presses.filter(t => clock - t < MASH_WINDOW);
       f.presses.push(clock);
       if (f.presses.length >= MASH_LIMIT) {
@@ -3011,6 +3023,11 @@ window.addEventListener('keydown', e => {
   if (state !== 'play' && (e.code === 'Enter' || e.code === 'Space') && !overlay.classList.contains('hidden')) {
     e.preventDefault();
     startGame(false);
+    return;
+  }
+  if (state !== 'play' && e.code === 'KeyN' && !overlay.classList.contains('hidden')) {  // N：のんびりモード
+    e.preventDefault();
+    startGame(false, true);
     return;
   }
   if (e.code === 'F2') { e.preventDefault(); toggleAdminMenu(); return; }
